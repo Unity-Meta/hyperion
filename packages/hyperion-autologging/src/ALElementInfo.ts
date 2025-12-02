@@ -6,11 +6,12 @@
 
 import { getReactComponentData_THIS_CAN_BREAK } from './ALReactUtils';
 import type { ReactComponentData } from './ALReactUtils';
-import { getVirtualPropertyValue, intercept, setVirtualPropertyValue } from '@hyperion/hyperion-core/src/intercept';
-import * as IElement from "@hyperion/hyperion-dom/src/IElement";
+import { getVirtualPropertyValue, intercept, setVirtualPropertyValue } from 'hyperion-core/src/intercept';
+import * as IElement from "hyperion-dom/src/IElement";
 
 const AL_ELEMENT_INFO_PROPNAME = '__alInfo';
 const AUTO_LOGGING_COMPONENT_TYPE = 'data-auto-logging-component-type';
+export type BailTraversalFunc = (foundReactComponent: boolean, depth: number) => boolean;
 
 export default class ALElementInfo {
   element: Element;
@@ -21,6 +22,7 @@ export default class ALElementInfo {
     element: Element
   ) {
     this.element = element;
+    // @ts-ignore
     intercept(element, IElement.IElementtPrototype); // This also ensures that proper interception is setup.
     setVirtualPropertyValue(
       element,
@@ -44,6 +46,10 @@ export default class ALElementInfo {
 
   static getOrCreate(element: Element): ALElementInfo {
     return ALElementInfo.get(element) ?? new ALElementInfo(element);
+  }
+
+  static getReactComponentData(element: Element, bailTraversalFunc?: BailTraversalFunc): ReactComponentData | null {
+    return ALElementInfo.get(element)?.getReactComponentData() ?? getReactComponentData_THIS_CAN_BREAK(element, bailTraversalFunc);
   }
 
   getReactComponentData(): ReactComponentData | null {

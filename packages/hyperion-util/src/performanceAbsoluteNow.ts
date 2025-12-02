@@ -4,6 +4,9 @@
 
 'use strict';
 
+import { assert } from "hyperion-globals";
+import { performanceNowOnAdjust } from "./performanceNowOnAdjust";
+
 /**
  * Sometimes we want absolute time and we
  * also want high resolution timestamp. This function provides high resolution
@@ -16,11 +19,14 @@
  *
  */
 
-
-let performanceAbsoluteNow: {
-  (): number,
-  setFallback?: (fallback: () => number) => void,
+type GetTimeFunc = () => number;
+type GetTimeFuncExtensions = {
+  setFallback: (fallback: () => number) => void;
+  fromRelativeTime(timestamp: number): number;
+  __adjust: () => number,
 };
+
+let performanceAbsoluteNow: GetTimeFunc & GetTimeFuncExtensions;
 
 let fallback = () => Date.now();
 
@@ -33,20 +39,76 @@ function setFallback(fn: () => number) {
 }
 
 let navigationStart = -1;
+let timeOriginDelta = 0;
 const performanceIsDefined = typeof performance === "object";
+const performanceNowIsDefined = performanceIsDefined && typeof performance.now === "function";
 if (performanceIsDefined) {
-  if (performance.timing && performance.timing.navigationStart) {
+  if (performance.timeOrigin) {
+    navigationStart = performance.timeOrigin;
+  } else if (performance.timing && performance.timing.navigationStart) {
     navigationStart = performance.timing.navigationStart;
-  } else if (performance.timeOrigin) {
-    navigationStart = performance.timeOrigin
   }
 }
 
-if (performanceIsDefined && typeof performance.now === "function" && navigationStart !== -1) {
-  performanceAbsoluteNow = () => performance.now() + navigationStart;
+let coreFunction: GetTimeFunc;
+let coreAdjustedFunction: GetTimeFunc;
+let __adjust: GetTimeFuncExtensions["__adjust"] = () => 0;
+if (performanceNowIsDefined && navigationStart !== -1) {
+  coreFunction = () => performance.now() + navigationStart;
+  coreAdjustedFunction = () => coreFunction() + timeOriginDelta;
+  __adjust = () => {
+    const delta = Date.now() - coreFunction();
+    if (delta > 500) {
+      /**
+       * The delta should be generally withing a few ms.
+       * If the delta is greater than .5 second, we assume that the browser
+       * has been backgrounded and we need to adjust the timeOrigin.
+       * Assuming the initial timeOrigin was the same as Date.now, then
+       * delta shows how much performance.now() is lagging behind Date.now()
+       * so by adding that to timeOrigin we can "catch up"
+       */
+      timeOriginDelta = delta;
+      performanceNowOnAdjust.call(delta);
+    }
+    return delta;
+  };
+
+  if (
+    typeof window === "object" &&
+    typeof window.addEventListener === "function"
+  ) {
+    const SafeEventOptions = {
+      capture: false,
+      passive: true,
+    };
+    window.addEventListener("blur", __adjust, SafeEventOptions);
+    window.addEventListener("focus", __adjust, SafeEventOptions);
+  }
 } else {
-  performanceAbsoluteNow = () => fallback();
+  coreAdjustedFunction = coreFunction = () => fallback();
 }
-performanceAbsoluteNow.setFallback = setFallback;
+
+const extensions: GetTimeFuncExtensions = {
+  setFallback,
+  fromRelativeTime: (() => {
+    assert(navigationStart !== -1, "cannot convert from relative time without a time origin value for navigation start");
+    if (navigationStart === -1) {
+      const navigationStartApproximate = performanceNowIsDefined
+        ? Date.now() - performance.now()
+        : 0;
+      return (timestamp: number) => {
+        return timestamp + navigationStartApproximate;
+      };
+
+    } else {
+      return (timestamp: number) => {
+        return timestamp + navigationStart;
+      };
+    }
+  })(),
+  __adjust
+};
+
+performanceAbsoluteNow = Object.assign(coreAdjustedFunction, extensions);
 
 export default performanceAbsoluteNow;

@@ -1,26 +1,28 @@
 {
-  "scope": "@hyperion",
-  "name": "@hyperion/hyperion-core",
+  "name": "hyperion-core",
   "description": "Core utility to intercept objects and add 'aspects' to them",
-  "version": "0.1.0",
+  "version": "0.3.4",
   "license": "MIT",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc", 
+    "build-go": "tsgo",
     "watch": "npm run build -- --watch",
     "start": "npm run watch",
     "test": "npm run build & jest"
   },
   "workspaces": [
-    "../devtools",
-    "../global",
-    "../hook"
+    "../hyperion-devtools",
+    "../hyperion-globals",
+    "../hyperion-async-counter",
+    "../hyperion-hook"
   ],
   "dependencies": {
-    "@hyperion/global": "^0.1.0",
-    "@hyperion/hook": "^0.1.0"
+    "hyperion-globals": "*",
+    "hyperion-hook": "*"
   },
   "devDependencies": {
-    "@hyperion/devtools": "^0.1.0",
-    "@types/jest": "^29.5.3"
+    "hyperion-devtools": "*",
+    "hyperion-async-counter": "*",
+    "@types/jest": "^29.5.14"
   }
 }

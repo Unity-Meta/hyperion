@@ -4,64 +4,46 @@
 
 'use strict';
 
-import { assert } from '@hyperion/global';
-import type * as React from 'react';
-import { IALFlowlet } from './ALFlowletManager';
-import * as Types from "@hyperion/hyperion-util/src/Types";
+import { assert } from 'hyperion-globals';
+import * as React from 'react';
+import * as Types from "hyperion-util/src/Types";
+import { ALSurfaceData } from './ALSurfaceData';
+import * as IReact from "hyperion-react/src/IReact";
+import { SafeGetterSetter } from 'hyperion-util/src/SafeGetterSetter';
 
 
 export type InitOptions = Types.Options<{
-  react: {
-    ReactModule: {
-      createContext: typeof React.createContext;
-      useContext: typeof React.useContext;
-    }
-  }
 }>;
 
-export type ALSurfaceContextFilledValue = {
-  nonInteractiveSurface: string;
-  surface: string;
-  flowlet: IALFlowlet;
-};
+export type ALSurfaceContextFilledValue = ALSurfaceData;
 
-type ALSurfaceContextValue =
-  ALSurfaceContextFilledValue
-  | {
-    nonInteractiveSurface: null;
-    surface: null;
-    flowlet: null;
-  };
+type ALSurfaceContextValue = ALSurfaceData | typeof ALSurfaceData.root;
 
-const DefaultSurfaceContext: ALSurfaceContextValue = {
-  nonInteractiveSurface: null,
-  surface: null,
-  flowlet: null,
-};
+const DefaultSurfaceContext: ALSurfaceContextValue = ALSurfaceData.root;
 
-export let ALSurfaceContext: React.Context<ALSurfaceContextValue> | null = null;
+export const ALSurfaceContextInstance = new SafeGetterSetter<React.Context<ALSurfaceContextValue>>("ALSurfaceContext");
 
 
-let ReactModule: InitOptions['react']['ReactModule'] | null = null;
 
-export function init(options: InitOptions): React.Context<ALSurfaceContextValue> {
-  assert(!ReactModule && !ALSurfaceContext, "Already initilized");
+export function init(_options: InitOptions): React.Context<ALSurfaceContextValue> {
+  assert(!ALSurfaceContextInstance.isSet(), "Already initilized");
 
-  ReactModule = options.react.ReactModule;
-  ALSurfaceContext = ReactModule.createContext(
+  // ReactModule = options.react.ReactModule;
+  const ReactModule = IReact.ReactModule.get();
+  ALSurfaceContextInstance.set(ReactModule.createContext(
     DefaultSurfaceContext,
-  );
+  ));
 
-  return ALSurfaceContext;
+  return ALSurfaceContextInstance.get();
 };
 
 
 export function useALSurfaceContext(): ALSurfaceContextValue {
-  if (!ReactModule || !ALSurfaceContext) {
+  if (!ALSurfaceContextInstance.isSet()) {
     return DefaultSurfaceContext;
   }
 
-  const context = ReactModule?.useContext(ALSurfaceContext);
+  const context = IReact.ReactModule.get().useContext(ALSurfaceContextInstance.get());
   assert(!!context, 'useALSurfaceContext must be used within an ALSurface',);
   return context ?? DefaultSurfaceContext;
 }

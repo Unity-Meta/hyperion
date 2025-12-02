@@ -4,7 +4,8 @@
 
 'use strict';
 
-import { SessionPersistentData } from "./SessionPersistentData";
+import { assert } from "hyperion-globals";
+import { CookiePersistentData, SessionPersistentData } from "./PersistentData";
 import { guid } from "./guid";
 
 export const ClientSessionID: string = new SessionPersistentData<string>(
@@ -12,15 +13,28 @@ export const ClientSessionID: string = new SessionPersistentData<string>(
   guid,
   v => v,
   v => v,
+  true, //In case page is immediately reloaded, we don't want to wait for the scheduler to save
 ).getValue();
 
 
-// (() => {
-//   const storage = getStorage();
-//   let id = storage?.getItem(CLIENT_SESSION_ID_FIELD);
-//   if (!id) {
-//     id = guid();
-//     storage?.setItem(CLIENT_SESSION_ID_FIELD, id);
-//   }
-//   return id;
-// })();
+let domainSessionId: CookiePersistentData<string> | null = null;
+export function getDomainSessionID(topLevelDomain?: string, cookieName?: string): string {
+
+  if (!domainSessionId) {
+    const currentHostname = window.location.hostname;
+    if (topLevelDomain) {
+      assert(currentHostname.endsWith(topLevelDomain), "invalid top level domain for this page");
+    } else {
+      topLevelDomain = currentHostname;
+    }
+
+    domainSessionId = new CookiePersistentData<string>(
+      cookieName ?? 'aldsid',
+      guid,
+      v => v,
+      v => v,
+      `;domain=${topLevelDomain}; path=/`
+    );
+  }
+  return domainSessionId.getValue();
+}

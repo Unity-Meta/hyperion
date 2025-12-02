@@ -1,13 +1,17 @@
+/**
+ * Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved.
+ */
 import React from "react";
+import { SurfaceComp } from "./Surface";
 
 export default function (/* props: Props */) {
   function setExpectedElementName(name: string): void {
     const element = document.getElementById('expectedElementName');
-    if(element != null) {
+    if (element != null) {
       element.innerHTML = name;
     }
   }
-  return(
+  return <SurfaceComp surface='inputs1'>
     <div>
       <h3>Element Name Testing</h3>
       Check the console for al_ui_events after clicking the buttons. <br />
@@ -45,15 +49,41 @@ export default function (/* props: Props */) {
             <td>
               <button onClick={() => {
                 setExpectedElementName('Test Description 2 Another Description');
-              }}aria-describedby="desc2 desc3">&nbsp;</button>
+              }} aria-describedby="desc2 desc3">&nbsp;</button>
             </td>
           </tr>
         </tbody>
       </table>
-      <div style={{display: 'none'}} id="label2">Test Label 2</div>
-      <div style={{display: 'none'}} id="label3">Another Label</div>
-      <div style={{display: 'none'}} id="desc2">Test Description 2</div>
-      <div style={{display: 'none'}} id="desc3">Another Description</div>
+      <div style={{ display: 'none' }} id="label2">Test Label 2</div>
+      <div style={{ display: 'none' }} id="label3">Another Label</div>
+      <div style={{ display: 'none' }} id="desc2">Test Description 2</div>
+      <div style={{ display: 'none' }} id="desc3">Another Description</div>
+      <div>
+        <label id='ch1'>Check box 1</label>
+        <input type='checkbox' aria-labelledby="ch1" defaultChecked></input>
+        <input type='checkbox' aria-label="Check box 2" ></input>
+        <SurfaceComp surface="inputs2" uiEventMetadata={{ click: { test1: "c2.1", test2: "c2.2" }, mousedown: { test1: "md2.1" } }}>
+          <input type='radio' aria-label="Radio 1" name='radios1'></input>
+          <input type="radio" aria-label="Radio 2" name='radios1' defaultChecked></input>
+          <SurfaceComp surface="inputs3" uiEventMetadata={{ click: { test1: "c3.1" } }} >
+            <input type='radio' aria-label="Radio 3" name='radios2'></input>
+            <input type="radio" aria-label="Radio 4" name='radios2'></input>
+            <input type="radio" name='radios2' id="radio5"></input>
+            <label htmlFor="radio5">Radio 5</label>
+          </SurfaceComp>
+        </SurfaceComp>
+        <select defaultValue="_v2">
+          <option value='_v1' >V1</option>
+          <option value='_v2' >V2</option>
+          <option value='_v3' >V3</option>
+        </select>
+      </div>
+      <label data-clickable="1" data-keydownable="1"><div><div><input
+        aria-checked="true" aria-disabled="false"
+        aria-describedby="js_1p" aria-labelledby="js_1q"
+        id="js_1o" type="radio" value="SINGLE" checked={true} name="js_1j"
+      /><div><div id="js_1q">Single image or video </div></div>
+        <div>One image or video, or a slideshow with multiple images</div></div></div></label>
     </div>
-  );
+  </SurfaceComp >;
 }

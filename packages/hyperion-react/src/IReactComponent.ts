@@ -5,7 +5,7 @@
 'use strict';
 
 
-import type * as Types from "@hyperion/hyperion-util/src/Types";
+import type * as Types from "hyperion-util/src/Types";
 import type * as React from 'react';
 import type {
   ReactComponentObjectProps,
@@ -13,16 +13,16 @@ import type {
   ReactSpecialComponentTypes
 } from './IReact';
 
-import { assert } from '@hyperion/global';
-import { Hook } from '@hyperion/hook/src/Hook';
-import { FunctionInterceptor, interceptFunction } from '@hyperion/hyperion-core/src/FunctionInterceptor';
-import { interceptMethod } from '@hyperion/hyperion-core/src/MethodInterceptor';
-import { ShadowPrototype } from '@hyperion/hyperion-core/src/ShadowPrototype';
-import TestAndSet from '@hyperion/hyperion-util/src/TestAndSet';
+import { assert } from 'hyperion-globals';
+import { Hook } from 'hyperion-hook/src/Hook';
+import { FunctionInterceptor, interceptFunction } from 'hyperion-core/src/FunctionInterceptor';
+import { interceptMethod } from 'hyperion-core/src/MethodInterceptor';
+import { ShadowPrototype } from 'hyperion-core/src/ShadowPrototype';
+import TestAndSet from 'hyperion-test-and-set/src/TestAndSet';
 import { Class, mixed } from './FlowToTsTypes';
 import * as IReact from './IReact';
 import * as IReactElementVisitor from './IReactElementVisitor';
-import { interceptConstructor } from "@hyperion/hyperion-core/src/ConstructorInterceptor";
+import { interceptConstructor } from "hyperion-core/src/ConstructorInterceptor";
 
 // $FlowIgnore[unclear-type]
 type IAny = any;
@@ -226,30 +226,28 @@ export function init(options: InitOptions): void {
              *  https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/prototype#:~:text=prototype%20property%2C%20by%20default
            */
 
-          // $FlowIgnore[prop-missing]
           const classComponentParentClass = component.prototype;
+          let classComponentParentClassParent;
 
           if (
-            classComponentParentClass instanceof ReactModule.Component ||
-            typeof classComponentParentClass?.render === 'function' || // possibly created via React.createClass
-            Object.getPrototypeOf(Object.getPrototypeOf(classComponentParentClass)) || // not a plain function, may be with some other lifecycle methods. 
-            classComponentParentClass === ReactModule.Component.prototype // in case buggy code didn't properly inherit from ReactModule.Component
+            classComponentParentClass && (
+              classComponentParentClass instanceof ReactModule.Component ||
+              typeof classComponentParentClass.render === 'function' || // possibly created via React.createClass
+              (
+                (classComponentParentClassParent = Object.getPrototypeOf(classComponentParentClass)) &&
+                Object.getPrototypeOf(classComponentParentClassParent)
+              ) || // not a plain function, may be with some other lifecycle methods. 
+              classComponentParentClass === ReactModule.Component.prototype // in case buggy code didn't properly inherit from ReactModule.Component
+            )
           ) {
-            // $FlowIgnore[incompatible-exact]
-            // $FlowIgnore[incompatible-type]
-            // $FlowIgnore[incompatible-type-arg]
             // @ts-ignore
             const classComponent: Class<TReactClassComponent> = component;
             interceptedComponent = processReactClassComponent(
               classComponent,
-              // $FlowIgnore[incompatible-exact]
-              // $FlowIgnore[incompatible-call]
               classComponentParentClass,
             );
             onReactClassComponentElement.call(classComponent, props);
           } else {
-            // $FlowIgnore[incompatible-use]
-            // $FlowIgnore[prop-missing]
             // @ts-ignore
             const functionalComponent: TReactFunctionComponent = component;
             interceptedComponent =
@@ -319,7 +317,7 @@ export function init(options: InitOptions): void {
     }
     : */ interceptArgs;
 
-  const handler = IJsxRuntimeModule.jsx.onArgsMapperAdd(args => {
+  const handler = IJsxRuntimeModule.jsx.onBeforeCallMapperAdd(args => {
     /**
      * TODO: T132536682 remove this guard later to speed things up
      * NOTE: tried using ErrorGuard.guard, and ErrorGuard.applyWithGuard but
@@ -341,8 +339,8 @@ export function init(options: InitOptions): void {
     return args;
   });
   if (IJsxRuntimeModule.jsxs !== IJsxRuntimeModule.jsx) {
-    IJsxRuntimeModule.jsxs.onArgsMapperAdd(handler);
+    IJsxRuntimeModule.jsxs.onBeforeCallMapperAdd(handler);
   }
-  IJsxRuntimeModule.jsxDEV.onArgsMapperAdd(handler);
-  IReactModule.createElement.onArgsMapperAdd(handler);
+  IJsxRuntimeModule.jsxDEV.onBeforeCallMapperAdd(handler);
+  IReactModule.createElement.onBeforeCallMapperAdd(handler);
 }

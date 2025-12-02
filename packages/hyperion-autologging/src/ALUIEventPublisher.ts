@@ -3,47 +3,75 @@
  */
 
 'use strict';
-import { Channel } from "@hyperion/hook/src/Channel";
-import { intercept } from "@hyperion/hyperion-core/src/intercept";
-import * as IEvent from "@hyperion/hyperion-dom/src/IEvent";
-import { setTriggerFlowlet } from "@hyperion/hyperion-flowlet/src/TriggerFlowlet";
-import { TimedTrigger } from "@hyperion/hyperion-util/src/TimedTrigger";
-import * as Types from "@hyperion/hyperion-util/src/Types";
-import performanceAbsoluteNow from "@hyperion/hyperion-util/src/performanceAbsoluteNow";
+import type * as Types from "hyperion-util/src/Types";
+
+import { intercept } from "hyperion-core/src/intercept";
+import * as IEvent from "hyperion-dom/src/IEvent";
+import { setTriggerFlowlet } from "hyperion-flowlet/src/TriggerFlowlet";
+import { TimedTrigger } from "hyperion-timed-trigger/src/TimedTrigger";
+import performanceAbsoluteNow from "hyperion-util/src/performanceAbsoluteNow";
 import ALElementInfo from './ALElementInfo';
-import { ALFlowletManager, IALFlowlet } from "./ALFlowletManager";
+import * as ALEventIndex from "./ALEventIndex";
 import { ALID, getOrSetAutoLoggingID } from "./ALID";
-import { ALElementTextEvent, getElementTextEvent, getInteractable, trackInteractable } from "./ALInteractableDOMElement";
+import { ALElementTextEvent, TrackEventHandlerConfig, enableUIEventHandlers, getElementTextEvent, getInteractable, isTrackedEvent } from "./ALInteractableDOMElement";
 import { ReactComponentData } from "./ALReactUtils";
 import { getSurfacePath } from "./ALSurfaceUtils";
-import { ALFlowletEvent, ALMetadataEvent, ALReactElementEvent, ALSharedInitOptions, ALTimedEvent } from "./ALType";
+import { ALElementEvent, ALExtensibleEvent, ALFlowletEvent, ALLoggableEvent, ALMetadataEvent, ALPageEvent, ALReactElementEvent, ALSharedInitOptions, ALTimedEvent, Metadata } from "./ALType";
+import { ALFlowletManagerInstance } from "./ALFlowletManager";
+import * as ALUIEventGroupPublisher from "./ALUIEventGroupPublisher";
+import * as Flags from "hyperion-globals/src/Flags";
+import { getCurrMainPageUrl } from "./MainPageUrl";
+import { ALSurfaceData } from "./ALSurfaceData";
+import { ALSurfaceEvent } from "./ALSurfaceEventData";
+
 
 /**
  * Generates a union type of all handler event and domEvent permutations.
  * e.g. {domEvent: KeyboardEvent, event: 'keydown', ...}
  */
-type ALUIEvent<T = EventHandlerMap> = ALTimedEvent & ALMetadataEvent & {
-  [K in keyof T]: Readonly<{
+type ALUIEventMap = {
+  [K in keyof EventHandlerMap]: Readonly<{
     // The typed domEvent associated with the event we are capturing
-    domEvent: T[K],
+    domEvent: EventHandlerMap[K],
     // Event we are capturing
     event: K,
-    // Element target associated with the domEvent; With interactableElementsOnly, will be the interactable element target.
-    element: HTMLElement | null,
     // Whether the event is generated from a user action or dispatched via script
     isTrusted: boolean,
-    // The underlying identifier assigned to this element
-    autoLoggingID: ALID | null,
   }>
-}[keyof T];
+};
+
+type ALUIEvent =
+  ALExtensibleEvent &
+  ALMetadataEvent &
+  ALPageEvent &
+  ALTimedEvent &
+  Types.Nullable<ALElementEvent> &
+  {
+    /**
+     * .element field could be either target associated with the domEvent; With interactableElementsOnly, the interactable element target.
+     * .targetElement is the event.target element, as opposed to .element which could represent the interactableElement
+     */
+    targetElement: Element | null,
+  } &
+  // Extend ALUIEvents with `hover` and other derived events
+  (
+    ALUIEventMap[keyof ALUIEventMap] |
+    Omit<ALUIEventMap['mouseover'], 'event'> & { event: 'hover' }
+  );
+;
+
+
 
 export type ALUIEventCaptureData = Readonly<
-  ALUIEvent &
+  ALElementTextEvent &
   ALFlowletEvent &
   ALReactElementEvent &
-  ALElementTextEvent &
+  ALUIEvent &
+  CommonEventData &
+  Types.Nullable<ALSurfaceEvent> &
   {
-    surface: string | null,
+    // surface: string | null;
+    value?: string;
   }
 >;
 
@@ -52,7 +80,8 @@ export type ALUIEventBubbleData = Readonly<
 >;
 
 export type ALLoggableUIEvent = Readonly<
-  ALUIEventCaptureData
+  ALUIEventCaptureData &
+  ALLoggableEvent
 >;
 
 export type ALUIEventData = Readonly<
@@ -72,48 +101,69 @@ type CurrentUIEvent = {
   timedEmitter: TimedTrigger,
 };
 
-type ALChannel = Channel<ALChannelUIEvent>;
-
 type EventHandlerMap = DocumentEventMap;
 
-type UIEventConfig<T = EventHandlerMap> = {
-  [K in keyof T]: Readonly<{
+type UIEventConfigMap = {
+  [K in keyof EventHandlerMap]: Readonly<{
     eventName: K,
     // A callable filter for this event, returning true if the event should be emitted, or false if it should be discarded up front
-    eventFilter?: (domEvent: T[K]) => boolean;
+    eventFilter?: (domEvent: EventHandlerMap[K]) => boolean;
     // Whether to limit to elements that are "interactable", i.e. those that have event handlers registered to the element.  Defaults to true.
     interactableElementsOnly?: boolean;
     // Whether to cache element's react information on capture, defaults to false.
     cacheElementReactInfo?: boolean;
+    /**
+    * Some events may trigger a change in the UI, which means using cached text is not safe.
+    * We always update the cache after text extraction (if cache is enabled), it is only safe
+    * to use the cached value (and skip recomputation) for certain events (e.g. mouseover).
+    * This field allows controlling this behavior. It is on by default for all events except /click|change|input|key/
+    */
+    useCachedElementText?: boolean;
+    /**
+     * Whether to include elementName, and elementText extraction and fields in the published events.
+     * Element text extraction can be expensive depending on the event,  and may not be needed in some cases.
+     * Defaults to false behavior.
+     */
+    enableElementTextExtraction?: boolean;
   }>
-}[keyof T];
+};
+
+// Extend UIEventConfig with additional event-specific configuration
+export type UIEventConfig = UIEventConfigMap[keyof Omit<EventHandlerMap, 'change' | 'mouseover'>]
+  | (
+    UIEventConfigMap['change'] & {
+      // (Default: true) Whether to include default state of radio/input/select elements when surfaces are mounted.
+      includeInitialDefaultState?: boolean,
+      // (Default: false) When includeInitialDefaultState is enabled, whether to also emit disabled state for input[checked] = false.  Otherwise only enabled state will be emitted.
+      includeInitialDefaultDisabledState?: boolean
+    }
+  )
+  | (
+    UIEventConfigMap['mouseover'] & {
+      // The duration in ms required for hovering over an element to emit a standalone `hover` event
+      durationThresholdToEmitHoverEvent?: number;
+    }
+  );
 
 export type InitOptions = Types.Options<
-  ALSharedInitOptions &
+  ALSharedInitOptions<ALChannelUIEvent> &
   {
     uiEvents: Array<UIEventConfig>;
-    channel: ALChannel;
   }
 >;
 
-type CommonEventData = (ALUIEvent & ALTimedEvent) & {
+type CommonEventData = (ALUIEvent & ALTimedEvent & ALPageEvent) & {
   // The event.target element,  as opposed to element which represents the interactableElement
-  targetElement: HTMLElement | null,
+  targetElement: Element | null;
+  value?: string;
 };
 
-/**
- *
- * @param event - the event to check whether it's valid and we want to push/pop it on the flowlet stack
- * @returns boolean indicating if flowlet should be added/removed from stack
- * Whether to push/pop this event's flowlet via FlowletManager
- */
-const shouldPushPopFlowlet = (event: Event) => event.bubbles && event.isTrusted;
+// Entrypoint to set up tracking and enable handlers
+export function trackAndEnableUIEventHandlers(eventName: UIEventConfig['eventName'], eventHandlerConfig: Omit<TrackEventHandlerConfig, 'active'>): void {
+  enableUIEventHandlers(eventName, eventHandlerConfig);
+}
 
-const activeUIEventFlowlets = new Map<UIEventConfig['eventName'], IALFlowlet>();
-
-const uiEventFlowletManager = new ALFlowletManager();
-
-function getCommonEventData<T extends keyof DocumentEventMap>(eventConfig: UIEventConfig<DocumentEventMap>, eventName: T, event: DocumentEventMap[T]): CommonEventData | null {
+function getCommonEventData<T extends keyof DocumentEventMap>(eventConfig: UIEventConfig, eventName: T, event: DocumentEventMap[T]): CommonEventData | null {
   const eventTimestamp = performanceAbsoluteNow();
 
   const { eventFilter, interactableElementsOnly = true } = eventConfig;
@@ -122,7 +172,7 @@ function getCommonEventData<T extends keyof DocumentEventMap>(eventConfig: UIEve
     return null;
   }
 
-  let element: HTMLElement | null = null;
+  let element: Element | null = null;
   let autoLoggingID: ALID | null = null;
   if (interactableElementsOnly) {
     /**
@@ -134,26 +184,53 @@ function getCommonEventData<T extends keyof DocumentEventMap>(eventConfig: UIEve
      * We use that as the base of event to ensure the text, surface, ... for events
      * remain consistent no matter where the user actually clicked, hovered, ...
      */
-    element = getInteractable(event.target, eventName, true);
+    element = getInteractable(event.target, eventName);
     if (element == null) {
       return null;
     }
     autoLoggingID = getOrSetAutoLoggingID(element);
   }
   else {
-    element = event.target instanceof HTMLElement ? event.target : null;
+    element = event.target instanceof Element ? event.target : null;
+  }
+
+  let value: string | undefined;
+  const metadata: Metadata = {};
+  if (eventName === 'change' && element) {
+    switch (element.nodeName) {
+      case 'INPUT': {
+        const input = element as HTMLInputElement;
+        value = input.checked + '';
+        metadata.type = input.getAttribute('type') ?? '';
+        break;
+      }
+      case 'SELECT': {
+        const select = element as HTMLSelectElement;
+        value = select.value;
+        metadata.type = 'select';
+        metadata.text = select.options[select.selectedIndex].text;
+        break;
+      }
+    }
   }
 
   return {
     domEvent: event,
     event: (eventName as any),
     element,
-    targetElement: event.target instanceof HTMLElement ? event.target : null,
+    targetElement: event.target instanceof Element ? event.target : null,
     eventTimestamp,
     isTrusted: event.isTrusted,
     autoLoggingID,
-    metadata: {},
+    metadata,
+    value,
+    pageURI: getCurrMainPageUrl(),
   };
+}
+
+let lastUIEvent: CurrentUIEvent | null;
+export function getCurrentUIEventData(): ALUIEventData | null | undefined {
+  return lastUIEvent?.data;
 }
 
 /**
@@ -164,79 +241,96 @@ function getCommonEventData<T extends keyof DocumentEventMap>(eventConfig: UIEve
  * and filtering of events is configured via {@link UIEventConfig}.
  */
 export function publish(options: InitOptions): void {
-  const { uiEvents, flowletManager, channel, domSurfaceAttributeName } = options;
+  const { uiEvents, channel } = options;
+  const flowletManager = ALFlowletManagerInstance;
 
-  let lastUIEvent: CurrentUIEvent | null;
-  const defaultTopFlowlet = new flowletManager.flowletCtor("/");
 
   uiEvents.forEach((eventConfig => {
-    const { eventName, cacheElementReactInfo = false } = eventConfig;
+    const {
+      eventName,
+      cacheElementReactInfo = false,
+      useCachedElementText = !/click|change|input|key/.test(eventName), // by default we skipt cache for these value
+      enableElementTextExtraction = false,
+    } = eventConfig;
+
 
     // the following will ensure that repeated items in the list won't have double handlers
-    if (trackInteractable(eventName)) {
+    if (isTrackedEvent(eventName)) {
       // Already handled
       return;
     }
 
     // Track event in the capturing phase
-    window.document.addEventListener(eventName, (event) => {
+    const captureHandler = (event: Event): void => {
       const uiEventData = getCommonEventData(eventConfig, eventName, event);
       if (!uiEventData) {
         return;
       }
-      const { element, targetElement, autoLoggingID, eventTimestamp } = uiEventData;
+      const { element, targetElement, autoLoggingID } = uiEventData;
 
-      const surface = getSurfacePath(targetElement, domSurfaceAttributeName);
+      const surface = getSurfacePath(targetElement);
       /**
        * Regardless of element, we want to set the flowlet on this event.
        * If we do have an element, we include its id in the flowlet.
        * Since it is possible to interact with the same exact element multiple times,
-       * we need yet another distinguishing fact, for which we use timestamp
+       * we need yet another distinguishing fact, for which we rely on flowlet id to be part of the name
        */
-      const topFlowlet = flowletManager.top();
-      let flowlet = topFlowlet ?? defaultTopFlowlet; // We want to ensure flowlet is always assigned
-      if (shouldPushPopFlowlet(event)) {
-        let flowletName = eventName + `(ts:${eventTimestamp}`;
-        if (autoLoggingID) {
-          flowletName += `,element:${autoLoggingID}`;
+      let flowletName = eventName + `(`;
+      let separator = '';
+      let surfaceData: ALSurfaceData | null = null;
+      if (surface) {
+        flowletName += `${separator}surface=${surface}`;
+        separator = '&';
+        surfaceData = ALSurfaceData.get(surface);
+        const eventMetadata = surfaceData?.getInheriteUIEventMetadata(eventName);
+        if (eventMetadata) {
+          Object.assign(uiEventData.metadata, eventMetadata);
         }
-        if (surface) {
-          flowletName += `,surface:${surface}`;
-        }
-        flowletName += ')';
-        flowlet = new flowletManager.flowletCtor(flowletName);
-        uiEventFlowletManager.push(flowlet);
-        flowlet = flowletManager.push(flowlet);
-        activeUIEventFlowlets.set(eventName, flowlet);
       }
+      if (autoLoggingID) {
+        flowletName += `${separator}element=${autoLoggingID}`;
+      }
+      flowletName += ')';
+
+      let triggerFlowlet = new flowletManager.flowletCtor(flowletName, ALUIEventGroupPublisher.getGroupRootFlowlet(event));
+
+      if (surface) {
+        triggerFlowlet.data.surface = surface;
+        triggerFlowlet.data.triggerUIEventName = eventName;
+      }
+
+      let callFlowlet = Flags.getFlags().preciseTriggerFlowlet
+        ? flowletManager.top()
+        : triggerFlowlet;
+
       let reactComponentData: ReactComponentData | null = null;
       if (targetElement && cacheElementReactInfo) {
         const elementInfo = ALElementInfo.getOrCreate(targetElement);
         reactComponentData = elementInfo.getReactComponentData();
       }
-      const elementText = getElementTextEvent(element, surface);
+      let elementText = enableElementTextExtraction ? getElementTextEvent(element, surface, eventName, useCachedElementText) : getElementTextEvent(null, null);
+
       const eventData: ALUIEventCaptureData = {
         ...uiEventData,
-        flowlet,
-        triggerFlowlet: flowlet,
+        callFlowlet,
+        triggerFlowlet,
         surface,
+        surfaceData,
         ...elementText,
         reactComponentName: reactComponentData?.name,
         reactComponentStack: reactComponentData?.stack,
       };
       updateLastUIEvent(eventData);
       intercept(event); // making sure we can track changes to the Event object
-      setTriggerFlowlet(event, flowlet);
+      setTriggerFlowlet(event, triggerFlowlet); // now every event handler will push the right flowlet on the stack
       channel.emit('al_ui_event_capture', eventData);
-    },
-      true, // useCapture
-    );
+    };
 
     /**
      * If any of the actual event handlers call stopPropagation, we know that
      * our bubble handler will not be called, so we trigger it rightaway
      */
-    IEvent.stopPropagation.onArgsObserverAdd(function (this) {
+    IEvent.stopPropagation.onBeforeCallObserverAdd(function (this) {
       if (lastUIEvent != null && lastUIEvent.data.domEvent === this) {
         lastUIEvent.data.metadata.propagation_was_stopped = "true";
         lastUIEvent.timedEmitter.run();
@@ -244,43 +338,38 @@ export function publish(options: InitOptions): void {
     });
 
     // Track event in the bubbling phase
-    window.document.addEventListener(
-      eventName,
-      (event) => {
-        const uiEventData = getCommonEventData(eventConfig, eventName, event);
-        if (!uiEventData) {
-          return;
-        }
+    const bubbleHandler = (event: Event): void => {
+      const uiEventData = getCommonEventData(eventConfig, eventName, event);
+      if (!uiEventData) {
+        return;
+      }
 
-        channel.emit('al_ui_event_bubble', uiEventData);
+      channel.emit('al_ui_event_bubble', uiEventData);
 
-        /**
-         * We want the actual event fire after all bubble listeners are done
-         * Therefore, we fire the second one here, instead of registering a
-         * listener for the bubble events.
-         */
-        if (lastUIEvent != null) {
-          const { data, timedEmitter } = lastUIEvent;
-          if (data.event === eventName && data.domEvent.target === event.target) {
-            /**
-             * In case during al_ui_event_bubble subscribers have updated the
-             * metadata of the event, we combine them into the metadata of the
-             * al_ui_event_capture event.
-             */
-            Object.assign(data.metadata, uiEventData.metadata);
-            timedEmitter.run();
-          }
+      /**
+       * We want the actual event fire after all bubble listeners are done
+       * Therefore, we fire the second one here, instead of registering a
+       * listener for the bubble events.
+       */
+      if (lastUIEvent != null) {
+        const { data, timedEmitter } = lastUIEvent;
+        if (data.event === eventName && data.domEvent.target === event.target) {
+          /**
+           * In case during al_ui_event_bubble subscribers have updated the
+           * metadata of the event, we combine them into the metadata of the
+           * al_ui_event_capture event.
+           */
+          Object.assign(data.metadata, uiEventData.metadata);
+          timedEmitter.run();
         }
+      }
+    };
 
-        let flowlet: IALFlowlet | undefined;
-        if (shouldPushPopFlowlet(event) && (flowlet = activeUIEventFlowlets.get(eventName)) != null) {
-          flowletManager.pop(flowlet);
-          activeUIEventFlowlets.delete(eventName);
-          uiEventFlowletManager.pop(flowlet);
-        }
-      },
-      false, // useCapture
-    );
+    // Enable the events handlers as well as interactable tracking
+    trackAndEnableUIEventHandlers(eventName, {
+      captureHandler,
+      bubbleHandler,
+    });
   }));
 
   function updateLastUIEvent(eventData: ALUIEventCaptureData) {
@@ -289,7 +378,10 @@ export function publish(options: InitOptions): void {
       timedEmitter.run();
     }
 
-    const data: ALUIEventData = eventData;
+    const data: ALUIEventData = {
+      ...eventData,
+      eventIndex: ALEventIndex.getNextEventIndex(),
+    };
 
     lastUIEvent = {
       data,
@@ -300,38 +392,4 @@ export function publish(options: InitOptions): void {
       }, MAX_CAPTURE_TO_BUBBLE_DELAY_MS),
     };
   }
-
-  /**
-   * We know the the flowlet.data is going to carry the async flow data based
-   * on where each function was created.
-   * We want to make sure that flow knows what is the actual corresponding
-   * alflowlet which corresponds to execution code at runtime.
-   * Since as of now we only start a new flowlet when there is a UI event, we
-   * add the following code to say whenever a new flowlet is pushed (a.k.a a new async
-   * context is started), we ensure that knows which alflowlet is responsible for it.
-   *
-   * To ensure this info carries forward, we look at the uiEventFlowletManager stack.
-   * This mechanism works because of how various 'creation time flowlets' are pushed/popped on
-   * the stack.
-   */
-  flowletManager.onPush.add((flowlet, _reason) => {
-    const uiEventFlowlet = uiEventFlowletManager.top();
-    if (uiEventFlowlet && flowlet.data.uiEventFlowlet !== uiEventFlowlet) {
-      flowlet.data.uiEventFlowlet = uiEventFlowlet;
-      if (flowlet.name === "useState" && flowlet.parent) {
-        /**
-         * We know that useState will trigger an update on the corresponding component
-         * The parent of the useState's flowlet is 'usually' a surface flowlet.
-         * That because useState is called within a render function, and render function's
-         * flowlet will be picked up from the surface context.
-         * If we update the surface's flowlet, then anything that mount/unmount under that
-         * surface will pickup the correct flowlet.
-         * Another alternative is to mark the surface's flowlet explicitily and here
-         * look for that marking and updat the flowlet.
-         *
-         */
-        flowlet.parent.data.uiEventFlowlet = uiEventFlowlet;
-      }
-    }
-  });
 }

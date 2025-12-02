@@ -144,24 +144,24 @@ describe("test interception mechanism", () => {
       result = [];
     }
 
-    IA.a1.getter.onValueObserverAdd(observer);
-    IA.a1.setter.onArgsObserverAdd(observer);
+    IA.a1.getter.onAfterCallObserverAdd(observer);
+    IA.a1.setter.onBeforeCallObserverAdd(observer);
 
-    IA.a2.getter.onValueObserverAdd(observer);
-    IA.a2.setter.onArgsObserverAdd(observer);
+    IA.a2.getter.onAfterCallObserverAdd(observer);
+    IA.a2.setter.onBeforeCallObserverAdd(observer);
 
-    IA.a3.getter.onValueObserverAdd(observer);
-    IA.a3.setter.onArgsObserverAdd(observer);
+    IA.a3.getter.onAfterCallObserverAdd(observer);
+    IA.a3.setter.onBeforeCallObserverAdd(observer);
 
-    IA.a4.getter.onValueObserverAdd(observer);
-    IA.a4.setter.onArgsObserverAdd(observer);
+    IA.a4.getter.onAfterCallObserverAdd(observer);
+    IA.a4.setter.onBeforeCallObserverAdd(observer);
 
-    IB.b.getter.onValueObserverAdd(observer);
-    IB.b.setter.onArgsObserverAdd(observer);
+    IB.b.getter.onAfterCallObserverAdd(observer);
+    IB.b.setter.onBeforeCallObserverAdd(observer);
 
     [IA.f1, IA.f2, IA.f3, IA.f4].forEach(fi => {
-      fi.onArgsObserverAdd(observer);
-      fi.onValueObserverAdd(observer);
+      fi.onBeforeCallObserverAdd(observer);
+      fi.onAfterCallObserverAdd(observer);
     });
 
     intercept(o);

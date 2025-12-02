@@ -2,20 +2,19 @@
  * Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved.
  */
 
-import { assert } from "@hyperion/global";
-import { Channel } from "@hyperion/hook/src/Channel";
-import * as IPromise from "@hyperion/hyperion-core/src/IPromise";
-import * as intercept from "@hyperion/hyperion-core/src/intercept";
-import * as IWindow from "@hyperion/hyperion-dom/src/IWindow";
-import * as IXMLHttpRequest from "@hyperion/hyperion-dom/src/IXMLHttpRequest";
-import { getTriggerFlowlet, setTriggerFlowlet } from "@hyperion/hyperion-flowlet/src/TriggerFlowlet";
-import * as Types from "@hyperion/hyperion-util/src/Types";
-import performanceAbsoluteNow from "@hyperion/hyperion-util/src/performanceAbsoluteNow";
+import * as IPromise from "hyperion-core/src/IPromise";
+import * as intercept from "hyperion-core/src/intercept";
+import * as IWindow from "hyperion-dom/src/IWindow";
+import * as IXMLHttpRequest from "hyperion-dom/src/IXMLHttpRequest";
+import { getTriggerFlowlet, setTriggerFlowlet } from "hyperion-flowlet/src/TriggerFlowlet";
+import { assert } from "hyperion-globals";
+import * as Types from "hyperion-util/src/Types";
+import performanceAbsoluteNow from "hyperion-util/src/performanceAbsoluteNow";
 import * as ALEventIndex from "./ALEventIndex";
 import { ALLoggableEvent, ALOptionalFlowletEvent, ALSharedInitOptions } from "./ALType";
+import { ALFlowletManagerInstance } from "./ALFlowletManager";
 
 type ALNetworkEvent = ALLoggableEvent & ALOptionalFlowletEvent & Readonly<{
-  event: "network";
   initiatorType: "fetch" | "xmlhttprequest"; // https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming/initiatorType
 }>;
 
@@ -31,10 +30,13 @@ type RequestInfo = {
   uri: URL;
   body?: RequestInit['body'],
 }
-export type ALNetworkRequestEvent = ALNetworkEvent & Readonly<RequestInfo>;
+export type ALNetworkRequestEvent = ALNetworkEvent & Readonly<RequestInfo> & {
+  event: 'network_request';
+};
 
 export type ALNetworkResponseEvent = ALNetworkEvent & Readonly<
   {
+    event: 'network_response',
     requestEvent: ALNetworkRequestEvent;
   }
   &
@@ -57,12 +59,9 @@ export type ALChannelNetworkEvent = Readonly<{
 }>;
 
 
-type ALChannel = Channel<ALChannelNetworkEvent>;
-
 export type InitOptions = Types.Options<
-  ALSharedInitOptions &
+  ALSharedInitOptions<ALChannelNetworkEvent> &
   {
-    channel: ALChannel;
     /**
      * if provided, only requests that pass the filter function
      * will generate request/response events.
@@ -117,14 +116,15 @@ export function getFetchRequestInfo(...args: Parameters<Window['fetch']>): Reque
 }
 
 function captureFetch(options: InitOptions): void {
-  const { channel, flowletManager, requestUrlMarker } = options;
+  const { channel, requestUrlMarker } = options;
+  const flowletManager = ALFlowletManagerInstance;
 
   if (requestUrlMarker) {
     /**
      * Note that args mapper runs before args observer, so the following
      * changes will be picked up by the next observers, which is what we want
      */
-    IWindow.fetch.onArgsMapperAdd(args => {
+    IWindow.fetch.onBeforeCallMapperAdd(args => {
       const urlParams = new URLSearchParams();
 
       let input = args[0];
@@ -161,19 +161,19 @@ function captureFetch(options: InitOptions): void {
     });
   }
 
-  IWindow.fetch.onArgsAndValueMapperAdd(([input, init]) => {
+  IWindow.fetch.onBeforeAndAfterCallMapperAdd(([input, init]) => {
     let ephemeralRequestEvent: ALNetworkResponseEvent['requestEvent'] | null;
     let request: RequestInfo = getFetchRequestInfo(input, init);
 
     if (!options.requestFilter || options.requestFilter(request)) {
-      const flowlet = flowletManager.top();
+      const callFlowlet = flowletManager.top();
       channel.emit("al_network_request", ephemeralRequestEvent = {
         initiatorType: "fetch",
-        event: "network",
+        event: "network_request",
         eventTimestamp: performanceAbsoluteNow(),
         eventIndex: ALEventIndex.getNextEventIndex(),
-        flowlet,
-        triggerFlowlet: flowlet?.data.triggerFlowlet,
+        callFlowlet,
+        triggerFlowlet: callFlowlet?.data.triggerFlowlet,
         ...request,
         metadata: {},
       });
@@ -182,7 +182,7 @@ function captureFetch(options: InitOptions): void {
     }
 
     const parentTriggerFlowlet = flowletManager.top()?.data.triggerFlowlet;
-    const triggerFlowlet = new flowletManager.flowletCtor(`fetch(method:${request.method},url:${request.uri.pathname})`, parentTriggerFlowlet);
+    const triggerFlowlet = new flowletManager.flowletCtor(`fetch(method=${request.method}&url=${request.uri.pathname})`, parentTriggerFlowlet);
 
     return value => {
       setTriggerFlowlet(value, triggerFlowlet); // This will be picked by the wrappers of Promis.* callbacks.
@@ -200,17 +200,18 @@ function captureFetch(options: InitOptions): void {
         value.then(response => {
           const requestEvent = intercept.getVirtualPropertyValue<ALNetworkRequestEvent>(value, REQUEST_INFO_PROP_NAME);
           assert(requestEvent != null, `Unexpected situation! Request info missing from fetch promise object`);
-          const flowlet = requestEvent?.flowlet; // Reuse the same flowlet as request, since by now things have changed.
+          const callFlowlet = requestEvent?.callFlowlet; // Reuse the same flowlet as request, since by now things have changed.
 
           // const triggerFlowlet = flowletManager.top()?.data.triggerFlowlet;
           assert(triggerFlowlet === flowletManager.top()?.data.triggerFlowlet, `Broken trigger flowlet chain!`);
 
           channel.emit('al_network_response', {
             initiatorType: "fetch",
-            event: "network",
+            event: "network_response",
             eventTimestamp: performanceAbsoluteNow(),
             eventIndex: ALEventIndex.getNextEventIndex(),
-            flowlet,
+            relatedEventIndex: requestEvent.eventIndex,
+            callFlowlet,
             triggerFlowlet,
             requestEvent,
             response,
@@ -224,14 +225,15 @@ function captureFetch(options: InitOptions): void {
 }
 
 function captureXHR(options: InitOptions): void {
-  const { channel, flowletManager, requestUrlMarker } = options;
+  const { channel, requestUrlMarker } = options;
+  const flowletManager = ALFlowletManagerInstance;
 
   if (requestUrlMarker) {
     /**
      * Note that args mapper runs before args observer, so the following
      * changes will be picked up by the next observers, which is what we want
      */
-    IXMLHttpRequest.open.onArgsMapperAdd(args => {
+    IXMLHttpRequest.open.onBeforeCallMapperAdd(args => {
       const urlParams = new URLSearchParams();
 
       const [method, url] = args;
@@ -247,7 +249,7 @@ function captureXHR(options: InitOptions): void {
     });
   }
 
-  IXMLHttpRequest.open.onArgsObserverAdd(function (this, method, url) {
+  IXMLHttpRequest.open.onBeforeCallObserverAdd(function (this, method, url) {
     const request: RequestInfo = typeof url === 'string'
       ? {
         method,
@@ -266,7 +268,7 @@ function captureXHR(options: InitOptions): void {
     );
 
     const parentTriggerFlowlet = flowletManager.top()?.data.triggerFlowlet;
-    const triggerFlowlet = new flowletManager.flowletCtor(`xhr(method:${method},url:${request.uri.pathname})`, parentTriggerFlowlet);
+    const triggerFlowlet = new flowletManager.flowletCtor(`xhr(method=${method}&url=${request.uri.pathname})`, parentTriggerFlowlet);
     setTriggerFlowlet(this, triggerFlowlet);
   });
 
@@ -287,28 +289,34 @@ function captureXHR(options: InitOptions): void {
     //   }
     // });
    */
-  IXMLHttpRequest.constructor.onValueObserverAdd(xhr => {
-    [
-      "abort",
-      "error",
-      "load",
-      "loadend",
-      "loadstart",
-      "progress",
-      "readystatechange",
-      "timeout",
-    ].forEach(eventName => {
-      xhr.addEventListener(eventName, event => {
-        const triggerFlowlet = getTriggerFlowlet(xhr);
-        assert(triggerFlowlet != null, `Expected triggerFlowlet to be assigned to xhr`);
-        if (triggerFlowlet) {
-          setTriggerFlowlet(event, triggerFlowlet);
-        }
+  if (__DEV__) {
+    IXMLHttpRequest.constructor.onAfterCallObserverAdd(xhr => {
+      [
+        "abort",
+        "error",
+        "load",
+        "loadend",
+        "loadstart",
+        "progress",
+        "readystatechange",
+        "timeout",
+      ].forEach(eventName => {
+        xhr.addEventListener(eventName, event => {
+          const triggerFlowlet = getTriggerFlowlet(xhr);
+          const topTriggerFlowlet = flowletManager.top()?.data.triggerFlowlet;
+          const eventTriggerFlowlet = getTriggerFlowlet(event.target);
+          assert(triggerFlowlet != null, `Expected triggerFlowlet to be assigned to xhr`);
+          assert(triggerFlowlet === topTriggerFlowlet, `Expected triggerFlowlet to be on the stack!`);
+          assert(triggerFlowlet === eventTriggerFlowlet, `Expected triggerFlowlet to be on the event.target!`);
+          // if (triggerFlowlet) {
+          //   setTriggerFlowlet(event, triggerFlowlet);
+          // }
+        });
       });
     });
-  });
+  }
 
-  IXMLHttpRequest.send.onArgsObserverAdd(function (this, body) {
+  IXMLHttpRequest.send.onBeforeCallObserverAdd(function (this, body) {
     const requestRaw = intercept.getVirtualPropertyValue<RequestInfo>(this, REQUEST_INFO_PROP_NAME);
     assert(requestRaw != null, `Unexpected situation! Request info is missing from xhr object`);
     const request = body instanceof Document ? requestRaw : {
@@ -317,17 +325,19 @@ function captureXHR(options: InitOptions): void {
     };
 
 
-    const flowlet = flowletManager.top(); // Before calling requestFilter and losing current top flowlet
+    const callFlowlet = flowletManager.top(); // Before calling requestFilter and losing current top callFlowlet
+    const triggerFlowlet = getTriggerFlowlet(this);
+
     if (!options.requestFilter || options.requestFilter(request)) {
       let requestEvent: ALNetworkResponseEvent['requestEvent'];
 
       channel.emit("al_network_request", requestEvent = {
         initiatorType: "xmlhttprequest",
-        event: "network",
+        event: "network_request",
         eventTimestamp: performanceAbsoluteNow(),
         eventIndex: ALEventIndex.getNextEventIndex(),
-        flowlet,
-        triggerFlowlet: flowlet?.data.triggerFlowlet,
+        callFlowlet,
+        triggerFlowlet,
         ...request, // assert already ensures request is not undefined
         metadata: {},
       });
@@ -336,13 +346,15 @@ function captureXHR(options: InitOptions): void {
         'loadend',
         event => {
           assert(event.target === this, "Invalid xhr target for loadend event");
+          assert(triggerFlowlet === flowletManager.top()?.data.triggerFlowlet, "top trigger flowlet on the stack not set correctly!");
           channel.emit('al_network_response', {
             initiatorType: "xmlhttprequest",
-            event: "network",
+            event: "network_response",
             eventTimestamp: performanceAbsoluteNow(),
             eventIndex: ALEventIndex.getNextEventIndex(),
-            flowlet, // should carry request flowlet forward
-            triggerFlowlet: flowletManager.top()?.data.triggerFlowlet, // Should check its own trigger
+            relatedEventIndex: requestEvent.eventIndex,
+            callFlowlet, // should carry request flowlet forward
+            triggerFlowlet, //should carry request triggerFlowlet forward as the main trigger
             requestEvent,
             response: this,
             metadata: {},

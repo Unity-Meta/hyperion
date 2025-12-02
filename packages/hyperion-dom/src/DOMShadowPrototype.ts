@@ -2,11 +2,11 @@
  * Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved.
  */
 
-import { assert } from "@hyperion/global";
-import { ShadowPrototype } from "@hyperion/hyperion-core/src/ShadowPrototype";
+import { assert } from "hyperion-globals";
+import { ShadowPrototype } from "hyperion-core/src/ShadowPrototype";
 import { VirtualAttribute } from "./VirtualAttribute";
-import { getObjectExtension } from "@hyperion/hyperion-core/src/intercept";
-import * as intercept from "@hyperion/hyperion-core/src/intercept";
+import { getObjectExtension } from "hyperion-core/src/intercept";
+import * as intercept from "hyperion-core/src/intercept";
 
 const NodeType2ShadoPrototype = new Map<number, ShadowPrototype>();
 const NodeName2ShadoPrototype = new Map<string, ShadowPrototype>();
@@ -90,7 +90,7 @@ export class DOMShadowPrototype<ClassType extends Object, ParentType extends Obj
 
 }
 
-export const sampleHTMLElement = window.document.head;
+export const sampleHTMLElement: HTMLElement = window.document.head;
 
 export function getVirtualAttribute<Name extends string>(obj: Object, name: Name): VirtualAttribute<Element, Name> | null {
   let shadowProto = getObjectExtension(obj, true)?.shadowPrototype;

@@ -5,9 +5,9 @@
  */
 'use strict';
 
-import { Channel } from "@hyperion/hook/src/Channel"
-import { Flowlet } from "@hyperion/hyperion-flowlet/src/Flowlet";
-import performanceAbsoluteNow from '@hyperion/hyperion-util/src/performanceAbsoluteNow';
+import { Channel } from "hyperion-channel/src/Channel"
+import { Flowlet } from "hyperion-flowlet/src/Flowlet";
+import performanceAbsoluteNow from 'hyperion-util/src/performanceAbsoluteNow';
 import * as ALHeartbeat from "../src/ALHeartbeat";
 import * as ALUIEventPublisher from "../src/ALUIEventPublisher";
 

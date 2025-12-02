@@ -2,8 +2,8 @@
  * Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved.
  */
 
-import { FlowletManager as BaseFlowletManager } from "@hyperion/hyperion-flowlet/src/FlowletManager";
-import { Flowlet, FlowletDataType } from "@hyperion/hyperion-flowlet/src/Flowlet";
+import { FlowletManager as BaseFlowletManager } from "hyperion-flowlet/src/FlowletManager";
+import { Flowlet, FlowletDataType } from "hyperion-flowlet/src/Flowlet";
 
 
 
@@ -14,8 +14,8 @@ import { Flowlet, FlowletDataType } from "@hyperion/hyperion-flowlet/src/Flowlet
  */
 export interface ALFlowletDataType extends FlowletDataType {
   surface?: string;
-  uiEventFlowlet?: IALFlowlet;
   triggerFlowlet?: IALFlowlet;
+  triggerUIEventName?: string;
 };
 
 export interface IALFlowlet<DataType extends ALFlowletDataType = ALFlowletDataType> extends Flowlet<DataType> { }
@@ -28,7 +28,6 @@ interface FlowletJSON {
 export interface ALFlowletJSON extends FlowletJSON {
   data: {
     surface?: string;
-    uiEventFlowlet: FlowletJSON | null | undefined;
     triggerFlowlet: FlowletJSON | null | undefined;
   },
 };
@@ -48,7 +47,6 @@ export class ALFlowlet<DataType extends ALFlowletDataType = ALFlowletDataType>
       ...flowletToJSON(this),
       data: {
         surface: this.data.surface,
-        uiEventFlowlet: this.data.uiEventFlowlet && flowletToJSON(this.data.uiEventFlowlet),
         triggerFlowlet: this.data.triggerFlowlet && flowletToJSON(this.data.triggerFlowlet),
       },
     };
@@ -62,3 +60,5 @@ export class ALFlowletManager<DataType extends ALFlowletDataType = ALFlowletData
     super(ALFlowlet);
   }
 }
+
+export const ALFlowletManagerInstance = new ALFlowletManager();

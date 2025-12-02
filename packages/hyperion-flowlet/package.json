@@ -1,28 +1,34 @@
 {
-  "scope": "@hyperion",
-  "name": "@hyperion/hyperion-flowlet",
+  "name": "hyperion-flowlet",
   "description": "Tracking the async execution flow of the application",
-  "version": "0.1.0",
+  "version": "0.3.4",
   "license": "MIT",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc", 
+    "build-go": "tsgo",
     "watch": "npm run build -- --watch",
     "start": "npm run watch",
     "test": "npm run build & jest"
   },
   "workspaces": [
-    "../devtools",
-    "../global",
-    "../hook",
+    "../hyperion-devtools",
+    "../hyperion-globals",
+    "../hyperion-async-counter",
+    "../hyperion-hook",
+    "../hyperion-timed-trigger",
+    "../hyperion-test-and-set",
     "../hyperion-dom"
   ],
   "dependencies": {
-    "@hyperion/global": "^0.1.0",
-    "@hyperion/hook": "^0.1.0",
-    "@hyperion/hyperion-dom": "^0.1.0"
+    "hyperion-globals": "*",
+    "hyperion-hook": "*",
+    "hyperion-timed-trigger": "*",
+    "hyperion-test-and-set": "*",
+    "hyperion-dom": "*"
   },
   "devDependencies": {
-    "@hyperion/devtools": "^0.1.0",
-    "@types/jest": "^29.5.3"
+    "hyperion-devtools": "*",
+    "hyperion-async-counter": "*",
+    "@types/jest": "^29.5.14"
   }
 }

@@ -4,137 +4,144 @@
 
 'use strict';
 
-import { assert } from "@hyperion/global/src/assert";
-import type { Channel } from "@hyperion/hook/src/Channel";
-import * as Types from "@hyperion/hyperion-util/src/Types";
-import performanceAbsoluteNow from '@hyperion/hyperion-util/src/performanceAbsoluteNow';
+import { assert, getFlags } from "hyperion-globals";
+import * as Types from "hyperion-util/src/Types";
+import performanceAbsoluteNow from 'hyperion-util/src/performanceAbsoluteNow';
+import * as ALCustomEvent from "./ALCustomEvent";
 import ALElementInfo from './ALElementInfo';
 import * as ALEventIndex from './ALEventIndex';
-import { IALFlowlet } from "./ALFlowletManager";
+import { ALFlowletManagerInstance } from "./ALFlowletManager";
 import * as ALID from './ALID';
 import { ALElementTextEvent, getElementTextEvent } from './ALInteractableDOMElement';
 import { ReactComponentData } from './ALReactUtils';
-import type { ALChannelSurfaceEvent, ALChannelSurfaceEventData } from './ALSurface';
-import { ALLoggableEvent, ALMetadataEvent, ALOptionalFlowletEvent, ALReactElementEvent, ALSharedInitOptions } from "./ALType";
+import type { ALChannelSurfaceEvent, ALSurfaceEvent, ALSurfaceEventData } from "./ALSurfaceEventData";
+import type { ALSurfaceCapability, } from './ALSurfaceTypes';
+import { ALElementEvent, ALFlowletEvent, ALLoggableEvent, ALMetadataEvent, ALPageEvent, ALReactElementEvent, ALSharedInitOptions } from "./ALType";
+import { getCurrMainPageUrl } from "./MainPageUrl";
 
-type ALMutationEvent = ALReactElementEvent & ALElementTextEvent & ALOptionalFlowletEvent & Readonly<
-  {
-    surface: string;
-    element: HTMLElement;
-    autoLoggingID: ALID.ALID;
-  }
-  &
-  (
-    {
-      event: 'mount_component';
-    }
-    |
-    {
-      event: 'unmount_component';
-      mountedDuration: number;
-      mountEvent: ALSurfaceMutationEventData;
-    }
-  )
->;
-
-export type ALSurfaceMutationEventData = Readonly<
+export type ALSurfaceMutationEventData =
   ALLoggableEvent &
-  ALMutationEvent
->;
+  ALPageEvent &
+  ALReactElementEvent &
+  ALElementTextEvent &
+  ALFlowletEvent &
+  ALMetadataEvent &
+  ALElementEvent &
+  ALSurfaceEvent &
+  Readonly<
+    {
+      capability: ALSurfaceCapability | null | undefined
+    }
+    &
+    (
+      {
+        event: 'mount_component';
+      }
+      |
+      {
+        event: 'unmount_component';
+        mountedDuration: number;
+        mountEvent: ALSurfaceMutationEventData;
+      }
+    )
+  >;
 
 export type ALChannelSurfaceMutationEvent = Readonly<{
   al_surface_mutation_event: [ALSurfaceMutationEventData],
 }
 >;
 
-export type ALSurfaceMutationChannel = Channel<ALChannelSurfaceMutationEvent & ALChannelSurfaceEvent>;
-
-type SurfaceInfo = ALReactElementEvent & ALElementTextEvent & ALMetadataEvent & {
-  surface: string,
-  element: HTMLElement,
-  addTime: number,
-  addFlowlet: IALFlowlet | null,
-  mountEvent: ALSurfaceMutationEventData | null,
-};
-
-const activeSurfaces = new Map<string, SurfaceInfo>();
-
 export type InitOptions = Types.Options<
-  ALSharedInitOptions &
+  ALSharedInitOptions<ALChannelSurfaceMutationEvent & ALChannelSurfaceEvent & ALCustomEvent.ALChannelCustomEvent> &
   {
-    channel: ALSurfaceMutationChannel;
     cacheElementReactInfo: boolean;
+    /**
+     * Whether to include elementName, and elementText extraction and fields in the published events.
+     * Element text extraction can be expensive depending on the event,  and for mutations may not be relevant.
+     */
+    enableElementTextExtraction?: boolean;
   }
 >;
 
 export function publish(options: InitOptions): void {
-  const { channel, flowletManager, cacheElementReactInfo } = options;
+  const { channel, cacheElementReactInfo, enableElementTextExtraction = false } = options;
+  const flowletManager = ALFlowletManagerInstance;
 
-  function processNode(event: ALChannelSurfaceEventData, action: 'added' | 'removed') {
+  const enableSurfaceDataGC = getFlags().enableSurfaceDataGC ?? false;
+  function processNode(event: ALSurfaceEventData, action: 'added' | 'removed') {
     const timestamp = performanceAbsoluteNow();
-    const { element, surface, metadata, triggerFlowlet } = event;
+    const { element, surface, metadata, surfaceData } = event;
 
-    const currFlowlet = flowletManager.top();
+    const callFlowlet = flowletManager.top();
     if (!(element instanceof HTMLElement) || /LINK|SCRIPT/.test(element.nodeName)) {
       return;
     }
     if (surface == null) {
       return;
     }
+    let mutationEvent = surfaceData.getMutationEvent();
+
+    __DEV__ && assert(
+      !mutationEvent || mutationEvent.element === element || mutationEvent.surface === surface,
+      `Invalid situation! Wrong Mutation Event is associated to surface ${surface}`
+    );
+
     switch (action) {
       case 'added': {
-        let info = activeSurfaces.get(surface);
-        if (!info) {
+        if (!mutationEvent) {
           let reactComponentData: ReactComponentData | null = null;
-          let elementText: ALElementTextEvent;
           if (cacheElementReactInfo) {
             const elementInfo = ALElementInfo.getOrCreate(element);
             reactComponentData = elementInfo.getReactComponentData();
-            elementText = getElementTextEvent(element, surface);
-          } else {
-            elementText = getElementTextEvent(null, surface);
           }
-          info = {
-            surface,
-            element: element,
-            addTime: timestamp,
-            addFlowlet: currFlowlet,
+          const elementText = enableElementTextExtraction ? getElementTextEvent(element, surface) : getElementTextEvent(null, null);
+
+          if (callFlowlet) {
+            metadata.add_call_flowlet = callFlowlet?.getFullName();
+          }
+          // surfaceData.setInheritedPropery('surface_mutation_add_time', timestamp);
+          channel.emit('al_surface_mutation_event', mutationEvent = surfaceData.setMutationEvent({
+            ...event,
+            event: 'mount_component',
+            eventTimestamp: timestamp,
+            eventIndex: ALEventIndex.getNextEventIndex(),
+            surface, // already in the evet, need to add again?
+            surfaceData, // already in the event.
+            element, // already in the evet, need to add again?
+            autoLoggingID: ALID.getOrSetAutoLoggingID(element),
             reactComponentName: reactComponentData?.name,
             reactComponentStack: reactComponentData?.stack,
             ...elementText,
-            mountEvent: null,
-            metadata,
-          };
-          activeSurfaces.set(surface, info);
-
-          channel.emit('al_surface_mutation_event', info.mountEvent = {
-            ...info,
-            event: 'mount_component',
-            eventTimestamp: info.addTime,
-            eventIndex: ALEventIndex.getNextEventIndex(),
-            autoLoggingID: ALID.getOrSetAutoLoggingID(element),
-            flowlet: info.addFlowlet,
-            triggerFlowlet,
-          });
-
-        } else if (element != info.element && element.contains(info.element)) {
+            metadata, // already in the evet, need to add again?
+            pageURI: getCurrMainPageUrl(),
+          }));
+        } else if (element === mutationEvent.element) {
+          console.warn(`Multiple mutation events for the same surface ${surface} `);
+          // } else if (element.contains(mutationEvent.element)) {
           /**
           * This means we are seeing a element that is higher in the DOM
           * and belongs to a surface that we have seen before.
           * So, we can just update the surface=>element info.
           *  */
-          info.element = element;
-          info.addFlowlet = currFlowlet;
-          info.addTime = timestamp;
+          // info.element = element;
+          // info.autoLoggingID = ALID.getOrSetAutoLoggingID(element);
+          // surfaceData.setExtension('surface_mutation', { addTime: timestamp });
+          // info.addTime = timestamp;
+          // if (callFlowlet) {
+          //   info.metadata.add_call_flowlet = callFlowlet.getFullName();
+          // }
+        } else {
+          if (!surfaceData.getInheritedPropery<boolean>('hasDuplicates')) {
+            // Report it once
+            console.error(`Same surface '${surface} name used for different surface instances at `, element, mutationEvent.element);
+            surfaceData.setInheritedPropery('hasDuplicates', true);
+          }
         }
         break;
       }
       case 'removed': {
-        const info = activeSurfaces.get(surface);
-        if (info && info.element === element) {
-          const removeFlowlet = currFlowlet;
+        if (mutationEvent && mutationEvent.element === element && mutationEvent.event === 'mount_component') { // should we do assert instead?
           const removeTime = timestamp;
-          activeSurfaces.delete(surface);
           /**
            * We share the same object between the mount and unmount events
            * therefore, any change by the subscribers of these events will
@@ -143,18 +150,38 @@ export function publish(options: InitOptions): void {
            * but the perf overhead would be un-necessary.
            * // Object.assign(info.metadata, metadata);
            */
-          assert(info.mountEvent != null, "Missing mutaion info for unmounting");
-          channel.emit('al_surface_mutation_event', {
-            ...info,
+          if (callFlowlet) {
+            mutationEvent.metadata.remove_call_flowlet = callFlowlet.getFullName();
+          }
+          // Update the surfaceData before emitting event in case event handlers wanted to use this data; then we can delete
+          channel.emit('al_surface_mutation_event', surfaceData.setMutationEvent({
+            ...mutationEvent,
             event: 'unmount_component',
             eventTimestamp: removeTime,
             eventIndex: ALEventIndex.getNextEventIndex(),
-            autoLoggingID: ALID.getOrSetAutoLoggingID(element),
-            mountedDuration: (removeTime - info.addTime) / 1000,
-            flowlet: removeFlowlet,
-            triggerFlowlet,
-            mountEvent: info.mountEvent,
-          });
+            relatedEventIndex: mutationEvent.eventIndex,
+            mountedDuration: (removeTime - mutationEvent.eventTimestamp) / 1000,
+            mountEvent: mutationEvent,
+            // flowlet: event.flowlet, // We want to keep the info.flowlet here
+            triggerFlowlet: event.triggerFlowlet, // the trigger has changed from what was saved in info
+          }));
+          // Now that we are done with this surface, we can try removing it
+          surfaceData.setMutationEvent(null);
+
+          /**
+           * In react strict mode during DEV, the useEffect, useLayoutEffect may be called multiple times
+           * We add the SurfaceData node to the tree during render, but remove it during unmount
+           * So, we may end up removing surfaceData node from tree without ensuring it is added back
+           * To avoid this, we add the feature behind a flag that one can turn on in production if needed
+           */
+          if (enableSurfaceDataGC) {
+            surfaceData.remove();
+          }
+
+        } else {
+          if (!surfaceData.getInheritedPropery<boolean>('hasDuplicates')) {
+            console.error(`Surface ${surface} is unmounted without proper previous mount event`);
+          }
         }
         break;
       }
@@ -162,11 +189,10 @@ export function publish(options: InitOptions): void {
   }
 
   channel.addListener('al_surface_mount', event => {
-    processNode(event, 'added');
+    !event.isProxy && processNode(event, 'added');
   });
 
   channel.addListener('al_surface_unmount', event => {
-    processNode(event, 'removed');
+    !event.isProxy && processNode(event, 'removed');
   });
-
 }

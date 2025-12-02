@@ -3,7 +3,7 @@
  */
 
 import "jest";
-import { AsyncCounter } from "@hyperion/global/src/AsyncCounter";
+import { AsyncCounter } from "hyperion-async-counter/src/AsyncCounter";
 import * as IGlobalThis from "../src/IGlobalThis";
 import { interceptFunction } from "../src/FunctionInterceptor";
 
@@ -12,7 +12,7 @@ function wrapHandler(handler: Function | string, observer: jest.Mock<any, any>) 
     handler = new Function(handler);
   };
   const fi = interceptFunction(handler);
-  fi.onArgsObserverAdd(observer);
+  fi.onBeforeCallObserverAdd(observer);
   return fi.interceptor;
 }
 
@@ -20,7 +20,7 @@ describe('test Global Scope interception', () => {
 
   test('test setTImeout', async () => {
     const observer = jest.fn();
-    IGlobalThis.setTimeout.onArgsMapperAdd(args => {
+    IGlobalThis.setTimeout.onBeforeCallMapperAdd(args => {
       args[0] = wrapHandler(args[0], observer);
       return args;
     });
@@ -40,7 +40,7 @@ describe('test Global Scope interception', () => {
 
   test('test setInterval', async () => {
     const observer = jest.fn();
-    IGlobalThis.setInterval.onArgsMapperAdd(args => {
+    IGlobalThis.setInterval.onBeforeCallMapperAdd(args => {
       args[0] = wrapHandler(args[0], observer);
       return args;
     });

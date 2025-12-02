@@ -1,0 +1,22 @@
+{
+  "name": "hyperion-async-counter",
+  "description": "async counter utility",
+  "version": "0.3.4",
+  "license": "MIT",
+  "author": "Mehrdad Reshadi",
+  "main": "./src/AsyncCounter.js",
+  "scripts": {
+    "build": "tsc", 
+    "build-go": "tsgo",
+    "watch": "npm run build -- --watch",
+    "start": "npm run watch",
+    "test": "npm run build & jest"
+  },
+  "workspaces": [
+    "../hyperion-devtools"
+  ],
+  "devDependencies": {
+    "hyperion-devtools": "^0.1.0",
+    "@types/jest": "^29.5.14"
+  }
+}

@@ -1,32 +1,34 @@
 {
-  "scope": "@hyperion",
-  "name": "@hyperion/hyperion-react",
+  "name": "hyperion-react",
   "description": "Utility to intercept React api and add 'aspects' to them",
-  "version": "0.1.0",
+  "version": "0.3.4",
   "license": "MIT",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc", 
+    "build-go": "tsgo",
     "watch": "npm run build -- --watch",
     "start": "npm run watch",
     "test": "npm run build & jest"
   },
   "workspaces": [
-    "../devtools",
-    "../global",
-    "../hook",
+    "../hyperion-devtools",
+    "../hyperion-globals",
+    "../hyperion-hook",
+    "../hyperion-test-and-set",
     "../hyperion-dom"
   ],
   "dependencies": {
-    "@hyperion/global": "^0.1.0",
-    "@hyperion/hook": "^0.1.0",
-    "@hyperion/hyperion-dom": "^0.1.0",
+    "hyperion-globals": "*",
+    "hyperion-hook": "*",
+    "hyperion-test-and-set": "*",
+    "hyperion-dom": "*",
     "@types/react": "^18.2.14",
     "@types/react-dom": "^18.2.7",
-    "@types/react-is": "^17.0.4",
-    "react-is": "^18.2.0"
+    "@types/react-is": "^18.3.0",
+    "react-is": "^18.3.1"
   },
   "devDependencies": {
-    "@hyperion/devtools": "^0.1.0",
-    "@types/jest": "^29.5.3"
+    "hyperion-devtools": "*",
+    "@types/jest": "^29.5.14"
   }
 }

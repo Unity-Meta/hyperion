@@ -2,14 +2,16 @@
  * Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved.
  */
 
-import { Hook } from "@hyperion/hook";
-import { getFunctionInterceptor } from "@hyperion/hyperion-core/src/FunctionInterceptor";
-import { CallbackType, interceptEventListener, isEventListenerObject } from "@hyperion/hyperion-dom/src/IEventListener";
+import { InterceptableFunction, getFunctionInterceptor, interceptFunction } from "hyperion-core/src/FunctionInterceptor";
+import { CallbackType, interceptEventListener, isEventListenerObject } from "hyperion-dom/src/IEventListener";
+import { assert, getLogger } from "hyperion-globals";
+import * as Flags from "hyperion-globals/src/Flags";
+import { Hook } from "hyperion-hook";
+import { TimedTrigger } from "hyperion-timed-trigger/src/TimedTrigger";
 import { Flowlet } from "./Flowlet";
-import { assert, getLogger } from "@hyperion/global";
-import { TimedTrigger } from "@hyperion/hyperion-util/src/TimedTrigger";
 
 const IS_FLOWLET_SETUP_PROP_NAME = `__isFlowletSetup`;
+const FLOWLET_DATA_PROP_NAME = `__flowletData`;
 
 const CLEANUP_PERIOD = 3000; // ms call cleanup at most every 3 seconds
 const MIN_STACK_SIZE_TO_SCHEDULE_CLEANUP = 100; // only if stack size passes this number schedule a later cleanup
@@ -29,7 +31,10 @@ export class FlowletManager<T extends Flowlet = Flowlet> {
 
   private _scheduler: TimedTrigger | null = null;
 
+  public readonly root: T;
   constructor(public flowletCtor: new (flowletName: string, parent?: T | null) => T) {
+    this.root = new flowletCtor("/");
+
     if (__DEV__) {
       this.onPush.add(flowlet => {
         assert(flowlet != null, `Unexpected NULL flowlet value pushed to stack!`);
@@ -77,8 +82,8 @@ export class FlowletManager<T extends Flowlet = Flowlet> {
     }
   }
 
-  top(): T | null {
-    return this._top;
+  top(): T {
+    return this._top ?? this.root;
   }
 
   private updateTop() {
@@ -136,76 +141,179 @@ export class FlowletManager<T extends Flowlet = Flowlet> {
   wrap<C extends CallbackType | undefined | null>(
     listener: C,
     apiName: string,
-    customFlowlet?: T,
     getTriggerFlowlet?: (...args: any) => T | null | undefined
   ): C {
     if (!listener) {
       return listener;
     }
 
-    const funcInterceptor = interceptEventListener(listener);
-    if (funcInterceptor && !funcInterceptor.testAndSet(IS_FLOWLET_SETUP_PROP_NAME)) {
-
-      const flowlet = customFlowlet ?? new this.flowletCtor(apiName, this.top());
-      if (!getTriggerFlowlet) {
-        /**
-         * we are not going to pickup an actual trigger later, which means whatever triggered
-         * the current code that is passing the callback, is the trigger inside of that callback
-         * going forward. So, we make a copy of it case the original trigger is replaced with a new one
-         */
-        const currTriggerFlowlet = flowlet.parent?.data.triggerFlowlet;
-        if (currTriggerFlowlet) {
-          flowlet.data.triggerFlowlet = currTriggerFlowlet;
-        }
-      }
-
-      const flowletManager = this;
-
-      // Should we use onArgsAndValueMapper instead of setCustom, although this is safer with the finally call.
-      funcInterceptor.setCustom(<any>function (this: any) {
-        const handler: Function = funcInterceptor.getOriginal();
-        const triggerFlowlet = getTriggerFlowlet?.apply(this, <any>arguments);
-        if (triggerFlowlet) {
-          flowlet.data.triggerFlowlet = triggerFlowlet;
-        } else {
-          // Lets delete the existing value to enaure we don't carry it from the previous invocation
-          delete flowlet.data.triggerFlowlet;
-        }
-
-        if (flowletManager.top() === flowlet) {
-          /**
-           * We would mostly expect the currentFLowlet to be on the top most of the time
-           * but we do this check here just in case we can save extra push/pop
-           */
-          return handler.apply(this, <any>arguments);
-        }
-        let res;
-        try {
-          flowletManager.push(flowlet); // let's not pass apiName to avoid creating a new flowlet each time.
-          res = handler.apply(this, <any>arguments);
-        } finally {
-          flowletManager.pop(flowlet, apiName);
-        }
-        return res;
-      });
+    let funcInterceptor = interceptEventListener(listener);
+    if (!funcInterceptor) {
+      return listener; // no need to wrap, just return the original listener
     }
-    return isEventListenerObject(listener) || !funcInterceptor ? listener : <C>funcInterceptor.interceptor;
-  }
 
-  getWrappedOrOriginal<T extends CallbackType | undefined | null>(listener: T): T {
+    type FlowletData = {
+      getTriggerFlowlet: typeof getTriggerFlowlet;
+      callFlowlet: T;
+    };
+
+    const topFlowlet = this.top();
+
+    if (funcInterceptor.testAndSet(IS_FLOWLET_SETUP_PROP_NAME)) {
     /**
-     * During wrapping, we replace a function with its intercepted version, which they might be passed
-     * to other api (such as browser api). In all other cases, wrapping returns the same original listener
-     *
-     * When we try to call the reverse an api (e.g. removeEventListener after calling addEventListener), application
-     * may pass the original listener again, and we need to ensure the wrapped version is sent back.
+     * listener is already wrapped and probably has closed on another callFlowlet, or getTriggerFlowlet function
+     * so, we test here to see if we need to create a new interceptor.
+     * This is almost similar to the dependecy list of useCallback in react.
      */
-    if (listener && !isEventListenerObject(listener)) {
-      const funcInterceptor = getFunctionInterceptor(listener);
-      if (funcInterceptor) {
-        return <T>funcInterceptor.interceptor;
+    // 
+    const fData = funcInterceptor.getData<FlowletData>(FLOWLET_DATA_PROP_NAME);
+    assert(fData != null, `Flowlet data is not set on the interceptor! This should never happen!`);
+    if (Flags.getFlags().verboseFlowletLogs && fData.getTriggerFlowlet !== getTriggerFlowlet) {
+      console.warn(`try reusing the same getTriggerFlowlet function for the same apiName: ${apiName} to avoid unnecessary interceptor recreation`);
+    }
+    if (
+      Flags.getFlags().preciseTriggerFlowlet // For now only enable behind a flag
+      &&
+      (
+        fData.getTriggerFlowlet !== getTriggerFlowlet // we close on getTriggerFlowlet, so if it has changed, we need a new interceptor
+        ||
+        (
+          !fData.getTriggerFlowlet &&  // We cannot rely on dynmically getting the trigger flowlet from the payload
+          fData.callFlowlet.data.triggerFlowlet !== topFlowlet.data.triggerFlowlet // the trigger has changed (see below where we copy it from the top flowlet)
+        )
+      )
+    ) {
+
+      const newListener = isEventListenerObject(listener)
+        ? function (this: any/* , arguments: IArguments */) {
+          //@ts-ignore
+          return listener.handleEvent.apply(this, arguments);
+        } as C :
+        function (this: any/* , arguments: IArguments */) {
+          //@ts-ignore
+          return listener.apply(this, arguments);
+        } as C;
+      // const oldFuncInterceptor = funcInterceptor;
+      // const newListener = function (this: any/* , arguments: IArguments */) {
+      //   //@ts-ignore
+      //   return oldFuncInterceptor.interceptor.apply(this, arguments);
+      // } as C;
+      return this.wrap(newListener, apiName, getTriggerFlowlet);
+    }
+  } else {
+  const callFlowlet = new this.flowletCtor(apiName, this.top());
+  if (!getTriggerFlowlet) {
+    /**
+     * we are not going to pickup an actual trigger later, which means whatever triggered
+     * the current code that is passing the callback, is the trigger inside of that callback
+     * going forward. So, we make a copy of it case the original trigger is replaced with a new one
+     */
+    const currTriggerFlowlet = callFlowlet.parent?.data.triggerFlowlet;
+    if (currTriggerFlowlet) {
+      callFlowlet.data.triggerFlowlet = currTriggerFlowlet;
+    }
+  }
+
+  const flowletManager = this;
+
+  funcInterceptor.setData<FlowletData>(FLOWLET_DATA_PROP_NAME, {
+    getTriggerFlowlet,
+    callFlowlet,
+  });
+
+  // Should we use onArgsAndValueMapper instead of setCustom, although this is safer with the finally call.
+  funcInterceptor.setCustom(<any>function (this: any) {
+    const handler: Function = funcInterceptor.getOriginal();
+
+    /**
+     * We should only change the callFlowlet.data.triggerFlowlet if there is a getTriggerFlowlet
+     * To test the effect of this fix, we only apply the fix if the flag is set
+     */
+    if (
+      !Flags.getFlags().preciseTriggerFlowlet // if not flag, then old behavior
+      || getTriggerFlowlet // otherwise, only touch the value if there is a getTriggerFlowlet
+    ) {
+      const triggerFlowlet = getTriggerFlowlet?.apply(this, <any>arguments);
+      if (triggerFlowlet) {
+        callFlowlet.data.triggerFlowlet = triggerFlowlet;
+      } else {
+        // Let's delete the existing value to ensure we don't carry it from the previous invocation/payload
+        delete callFlowlet.data.triggerFlowlet;
       }
     }
-    return listener;
+
+    if (flowletManager.top() === callFlowlet) {
+      /**
+       * We would mostly expect the currentFLowlet to be on the top most of the time
+       * but we do this check here just in case we can save extra push/pop
+       */
+      return handler.apply(this, <any>arguments);
+    }
+    let res;
+    try {
+      flowletManager.push(callFlowlet); // let's not pass apiName to avoid creating a new flowlet each time.
+      res = handler.apply(this, <any>arguments);
+    } finally {
+      flowletManager.pop(callFlowlet, apiName);
+    }
+    return res;
+  });
+}
+return isEventListenerObject(listener) || !funcInterceptor ? listener : <C>funcInterceptor.interceptor;
   }
+
+/**
+ * In case we wanted a function to push/pop a flowlet name on the stack, we can
+ * use this helper function to create a wrapper that marks the desired flowlet
+ * @param listener
+ * @param getFlowletName
+ * @returns
+ */
+mark<F extends InterceptableFunction | undefined | null>(
+  func: F,
+  getFlowletName: (...args: any) => string,
+): F {
+  if (!func) {
+    return func;
+  }
+
+  const funcInterceptor = interceptFunction(func);
+  if (funcInterceptor && !funcInterceptor.testAndSet(IS_FLOWLET_SETUP_PROP_NAME)) {
+
+    const flowletManager = this;
+
+    // Should we use onArgsAndValueMapper instead of setCustom, although this is safer with the finally call.
+    funcInterceptor.setCustom(<any>function (this: any) {
+      const handler: Function = funcInterceptor.getOriginal();
+      const flowletName = getFlowletName.apply(this, <any>arguments);
+      const callFlowlet = new flowletManager.flowletCtor(flowletName, flowletManager.top());
+      let res;
+      try {
+        flowletManager.push(callFlowlet);
+        res = handler.apply(this, <any>arguments);
+      } finally {
+        flowletManager.pop(callFlowlet);
+      }
+      return res;
+    });
+  }
+  return <F>funcInterceptor.interceptor;
+}
+
+getWrappedOrOriginal<T extends CallbackType | undefined | null>(listener: T): T {
+  /**
+   * During wrapping, we replace a function with its intercepted version, which they might be passed
+   * to other api (such as browser api). In all other cases, wrapping returns the same original listener
+   *
+   * When we try to call the reverse an api (e.g. removeEventListener after calling addEventListener), application
+   * may pass the original listener again, and we need to ensure the wrapped version is sent back.
+   */
+  if (listener && !isEventListenerObject(listener)) {
+    const funcInterceptor = getFunctionInterceptor(listener);
+    if (funcInterceptor) {
+      return <T>funcInterceptor.interceptor;
+    }
+  }
+  return listener;
+}
 }

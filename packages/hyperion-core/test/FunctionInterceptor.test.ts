@@ -59,8 +59,8 @@ describe("test modern classes", () => {
     const func = (i: number, s: string) => i + s.length;
     func.x = 42;
     const fi = interceptFunction(func, false, null, "tester");
-    const argObserver = fi.onArgsObserverAdd(jest.fn());
-    const valueObserver = fi.onValueObserverAdd(jest.fn());
+    const argObserver = fi.onBeforeCallObserverAdd(jest.fn());
+    const valueObserver = fi.onAfterCallObserverAdd(jest.fn());
     expect(fi.getOriginal()).toStrictEqual(func);
     expect(fi.interceptor.x).toBe(func.x);
     const result = fi.interceptor(10, "12345");
@@ -200,7 +200,7 @@ describe("test modern classes", () => {
       let arg0Filtered = arg0;
 
       if (state & InterceptorState.HasArgsMapper) {
-        IA.a.onArgsMapperAdd(function (value) {
+        IA.a.onBeforeCallMapperAdd(function (value) {
           const a1 = value[0];
           expect(a1).toBe(arg0);
 
@@ -213,7 +213,7 @@ describe("test modern classes", () => {
       }
 
       if (state & InterceptorState.HasArgsObserver) {
-        IA.a.onArgsObserverAdd(value => {
+        IA.a.onBeforeCallObserverAdd(value => {
           result += value;
           expect(value).toBe(arg0Filtered);
         });
@@ -224,7 +224,7 @@ describe("test modern classes", () => {
       let value0Filtered = value0;
 
       if (state & InterceptorState.HasValueMapper) {
-        IA.a.onValueMapperAdd(value => {
+        IA.a.onAfterCallMapperAdd(value => {
           expect(value).toBe(value0);
           result += value;
           return `{${value}}`;
@@ -233,7 +233,7 @@ describe("test modern classes", () => {
         value0Filtered = `{${value0}}`;
       }
       if (state & InterceptorState.HasValueObserver) {
-        IA.a.onValueObserverAdd(value => {
+        IA.a.onAfterCallObserverAdd(value => {
           result += value;
           expect(value).toBe(value0Filtered);
         });
@@ -254,10 +254,10 @@ describe("test modern classes", () => {
   test("test .interception remove hooks", () => {
     const { IA, B } = testSetup();
     let hookCalled = 0;
-    IA.a.onArgsMapperRemove(IA.a.onArgsMapperAdd(value => (hookCalled++, value)));
-    IA.a.onArgsObserverRemove(IA.a.onArgsObserverAdd(_ => { hookCalled++ }));
-    IA.a.onValueMapperRemove(IA.a.onValueMapperAdd(value => (hookCalled++, value)));
-    IA.a.onValueObserverRemove(IA.a.onValueObserverAdd(_ => { hookCalled++ }));
+    IA.a.onBeforeCallMapperRemove(IA.a.onBeforeCallMapperAdd(value => (hookCalled++, value)));
+    IA.a.onBeforeCallObserverRemove(IA.a.onBeforeCallObserverAdd(_ => { hookCalled++ }));
+    IA.a.onAfterCallMapperRemove(IA.a.onAfterCallMapperAdd(value => (hookCalled++, value)));
+    IA.a.onAfterCallObserverRemove(IA.a.onAfterCallObserverAdd(_ => { hookCalled++ }));
 
     const o = new B();
     o.a('1');
@@ -267,7 +267,7 @@ describe("test modern classes", () => {
   test("test interception hooks this-arg type", () => {
     const { IA, A, IB, B } = testSetup();
     const o = new B();
-    IA.a.onArgsObserverAdd(function (this, value) {
+    IA.a.onBeforeCallObserverAdd(function (this, value) {
       expect(this instanceof A).toBe(true);
 
       expect(typeof this.a).toBe("function");
@@ -276,7 +276,7 @@ describe("test modern classes", () => {
       expect(typeof this.b).toBe("function");
     });
 
-    IB.b.onArgsObserverAdd(function (this) {
+    IB.b.onBeforeCallObserverAdd(function (this) {
       expect(this instanceof A).toBe(true);
       expect(this instanceof B).toBe(true);
 
@@ -298,9 +298,9 @@ describe("test modern classes", () => {
       result.push(value);
     };
 
-    IA.foo.onArgsObserverAdd(argsObserver);
-    IA.bar.onArgsObserverAdd(argsObserver)
-    IA.baz.onArgsObserverAdd(argsObserver)
+    IA.foo.onBeforeCallObserverAdd(argsObserver);
+    IA.bar.onBeforeCallObserverAdd(argsObserver)
+    IA.baz.onBeforeCallObserverAdd(argsObserver)
 
     o.foo = function (this, b) { return !b; }
     o.bar = n => 2 * n;
@@ -345,10 +345,10 @@ describe("test modern classes", () => {
     const b = new B();
 
     const A_foo_observer = jest.fn();
-    IA_foo.onArgsObserverAdd(A_foo_observer);
+    IA_foo.onBeforeCallObserverAdd(A_foo_observer);
 
     const B_foo_observer = jest.fn();
-    IB_foo.onArgsObserverAdd(B_foo_observer);
+    IB_foo.onBeforeCallObserverAdd(B_foo_observer);
 
     a.foo(1);
     expect(A_foo_observer.mock.calls.length).toBe(1);
@@ -365,8 +365,8 @@ describe("test modern classes", () => {
     const observer = jest.fn<number, [number]>(i => i);
     const fi = interceptFunction(observer);
     const argMappers = [
-      fi.onArgsMapperAdd(([i]) => [i * 2]),
-      fi.onArgsMapperAdd(([i]) => [i * 3]),
+      fi.onBeforeCallMapperAdd(([i]) => [i * 2]),
+      fi.onBeforeCallMapperAdd(([i]) => [i * 3]),
     ];
 
     const input = 1;
@@ -376,11 +376,11 @@ describe("test modern classes", () => {
     expect(observer.mock.calls[0][0]).toBe(output);
     expect(observer.mock.results[0].value).toBe(output);
 
-    argMappers.forEach(h => fi.onArgsMapperRemove(h));
+    argMappers.forEach(h => fi.onBeforeCallMapperRemove(h));
 
     const valueMappers = [
-      fi.onValueMapperAdd(i => i * 5),
-      fi.onValueMapperAdd(i => i * 7),
+      fi.onAfterCallMapperAdd(i => i * 5),
+      fi.onAfterCallMapperAdd(i => i * 7),
     ];
 
     output = fi.interceptor(input);
@@ -389,7 +389,7 @@ describe("test modern classes", () => {
     expect(observer.mock.calls[1][0]).toBe(input);
     expect(observer.mock.results[1].value).toBe(input);
 
-    valueMappers.forEach(h => fi.onValueMapperRemove(h));
+    valueMappers.forEach(h => fi.onAfterCallMapperRemove(h));
 
     output = fi.interceptor(input);
     expect(output).toBe(input);
@@ -419,14 +419,14 @@ describe("test modern classes", () => {
   test("arg observers blocking call", () => {
     const fn = jest.fn<void, [number]>(i => { });
     const fi = interceptFunction(fn);
-    fi.onArgsObserverAdd(i => i === 0); // filters 0
+    fi.onBeforeCallObserverAdd(i => i === 0); // filters 0
 
     fi.interceptor(0); // should be blocked
     fi.interceptor(1); // should go through
     expect(fn).toBeCalledTimes(1);
     expect(fn.mock.calls[0][0]).toBe(1);
 
-    fi.onArgsObserverAdd(i => i === 1); // filters 1
+    fi.onBeforeCallObserverAdd(i => i === 1); // filters 1
 
     fn.mockClear();
     fi.interceptor(0); // should be blocked
@@ -438,7 +438,7 @@ describe("test modern classes", () => {
     const fn = jest.fn<number, [number]>(i => i);
     const fi = interceptFunction(fn);
 
-    fi.onArgsAndValueMapperAdd(args => {
+    const handler1 = fi.onBeforeAndAfterCallMapperAdd(args => {
       args[0] *= 3;
       return value => {
         return value * 5;
@@ -451,7 +451,7 @@ describe("test modern classes", () => {
     expect(fn.mock.results[0].value).toBe((2 * 3));
     expect(result).toBe((2 * 3) * 5);
 
-    fi.onArgsAndValueMapperAdd(args => {
+    const handler2 = fi.onBeforeAndAfterCallMapperAdd(args => {
       args[0] *= 7;
       return value => {
         return value * 11;
@@ -463,6 +463,15 @@ describe("test modern classes", () => {
     expect(fn.mock.calls[1][0]).toBe((2 * 3) * 7);
     expect(fn.mock.results[1].value).toBe(((2 * 3) * 7));
     expect(result).toBe((((2 * 3) * 7) * 5) * 11);
+
+    fi.onBeforeAndAfterCallMapperRemove(handler2);
+    fi.onBeforeAndAfterCallMapperRemove(handler1);
+
+    result = fi.interceptor(2);
+    expect(fn).toBeCalledTimes(3);
+    expect(fn.mock.calls[2][0]).toBe(2);
+    expect(fn.mock.results[2].value).toBe(2);
+    expect(result).toBe(2);
   });
 
 
@@ -480,15 +489,15 @@ describe("test modern classes", () => {
     func = fi.interceptor;
 
     let ephemeralValue: number = 0;
-    fi.onArgsObserverAdd(i => {
+    fi.onBeforeCallObserverAdd(i => {
       ephemeralValue = i;
     });
-    fi.onValueObserverAdd(value => {
+    fi.onAfterCallObserverAdd(value => {
       expect(ephemeralValue).toBe(0);
     });
 
     let callCount = 0;
-    fi.onArgsAndValueMapperAdd(args => {
+    fi.onBeforeAndAfterCallMapperAdd(args => {
       callCount++;
       return value => {
         expect(value.length).toBe(args[0]);

@@ -4,16 +4,19 @@
 
 'use strict';
 
-import type { Channel } from "@hyperion/hook/src/Channel";
-import { TimedTrigger } from '@hyperion/hyperion-util/src/TimedTrigger';
-import performanceAbsoluteNow from '@hyperion/hyperion-util/src/performanceAbsoluteNow';
-import * as Types from "@hyperion/hyperion-util/src/Types";
+import type { Channel } from "hyperion-channel/src/Channel";
+import { TimedTrigger } from 'hyperion-timed-trigger/src/TimedTrigger';
+import performanceAbsoluteNow from 'hyperion-util/src/performanceAbsoluteNow';
+import * as Types from "hyperion-util/src/Types";
 import { ALChannelUIEvent } from "./ALUIEventPublisher";
 import * as ALEventIndex from "./ALEventIndex";
 import { ALLoggableEvent } from "./ALType";
+import * as ALInteractableDOMElement from "./ALInteractableDOMElement";
 
 export enum ALHeartbeatType {
   REGAIN_PAGE_VISIBILITY = "REGAIN_PAGE_VISIBILITY",
+  PAGE_FOCUS_GAINED = "PAGE_FOCUS_GAINED",
+  PAGE_FOCUS_LOST = "PAGE_FOCUS_LOST",
   SCHEDULED = "SCHEDULED",
   START = "START",
   STOP = "STOP",
@@ -101,8 +104,28 @@ export function start(options: InitOptions): void {
   }
   document.addEventListener(VISIBILITY_CHANGE_EVENT, pageVisibilityListener);
 
+
+  /**
+   * Note that we use focus/blure instead of focusin/focusout because we don't want to events bubbling from descendant elements
+   */
+  let focusHandler;
+  window.addEventListener(
+    'focus',
+    focusHandler = () => _logHeartbeat(ALHeartbeatType.PAGE_FOCUS_GAINED),
+    ALInteractableDOMElement.SafeBubbleEventListenerOptions
+  );
+  let blurHandler;
+  window.addEventListener(
+    'blur',
+    blurHandler = () => _logHeartbeat(ALHeartbeatType.PAGE_FOCUS_LOST),
+    ALInteractableDOMElement.SafeBubbleEventListenerOptions
+  );
+
+
   _releaseListeners = () => {
     document.removeEventListener(VISIBILITY_CHANGE_EVENT, pageVisibilityListener);
+    window.removeEventListener('focus', focusHandler, ALInteractableDOMElement.SafeBubbleEventListenerOptions);
+    window.removeEventListener('blur', blurHandler, ALInteractableDOMElement.SafeBubbleEventListenerOptions);
     channel.removeListener('al_ui_event', userActionListener);
   }
   _logHeartbeat(ALHeartbeatType.START);
@@ -133,7 +156,6 @@ function _logHeartbeat(heartbeatType: ALHeartbeatType): void {
       event: 'heartbeat',
       eventIndex: ALEventIndex.getNextEventIndex(),
       eventTimestamp: timestamp,
-      // flowlet: AdsALFlowletManager.top(),
       heartbeatType,
       metadata: {},
     });

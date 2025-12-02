@@ -74,22 +74,22 @@ describe("test Constructor Interceptor", () => {
       result = [];
     }
 
-    IBCtor.onArgsMapperAdd(function (this, args) {
+    IBCtor.onBeforeCallMapperAdd(function (this, args) {
       observer([...args]);
       args[0] += 1;
       args[1] += "-world";
       return args;
     })
-    IBCtor.onArgsObserverAdd(function (this, n, s) {
+    IBCtor.onBeforeCallObserverAdd(function (this, n, s) {
       observer([n, s]);
     })
 
-    IBCtor.onValueMapperAdd(function (this, value) {
+    IBCtor.onAfterCallMapperAdd(function (this, value) {
       observer(value);
       return value;
     })
 
-    IBCtor.onValueObserverAdd(function (this, value) {
+    IBCtor.onAfterCallObserverAdd(function (this, value) {
       observer(value);
     })
 
@@ -111,19 +111,19 @@ describe("test Constructor Interceptor", () => {
     }
 
     // IAShadow.onAfterInterceptObj(argsObserver);
-    IBCtor.onArgsObserverAdd(function (value) {
+    IBCtor.onBeforeCallObserverAdd(function (value) {
       observer(value);
     })
-    IBCtor.onArgsMapperAdd(function (this, value) {
+    IBCtor.onBeforeCallMapperAdd(function (this, value) {
       const a0 = value[0];
       observer(a0);
       value[0] = a0 + 1;
       return value;
     })
-    IBCtor.onValueObserverAdd(function (this, value) {
+    IBCtor.onAfterCallObserverAdd(function (this, value) {
       observer(value);
     })
-    IBCtor.onValueMapperAdd(function (this, value) {
+    IBCtor.onAfterCallMapperAdd(function (this, value) {
       observer(value);
       return value;
     })
@@ -131,20 +131,20 @@ describe("test Constructor Interceptor", () => {
     const o = new Ctors.B(20);
     expectResultTobe("ctor", [20, 21, o, o]);
 
-    IA.a.getter.onValueObserverAdd(observer);
-    IA.a.setter.onArgsObserverAdd(observer);
+    IA.a.getter.onAfterCallObserverAdd(observer);
+    IA.a.setter.onBeforeCallObserverAdd(observer);
 
-    IA.foo.getter.onValueObserverAdd(observer);
-    IA.foo.setter.onArgsObserverAdd(observer);
+    IA.foo.getter.onAfterCallObserverAdd(observer);
+    IA.foo.setter.onBeforeCallObserverAdd(observer);
 
-    IA.bar.getter.onValueObserverAdd(observer);
-    IA.bar.setter.onArgsObserverAdd(observer);
+    IA.bar.getter.onAfterCallObserverAdd(observer);
+    IA.bar.setter.onBeforeCallObserverAdd(observer);
 
-    IA.baz.getter.onValueObserverAdd(observer);
-    IA.baz.setter.onArgsObserverAdd(observer);
+    IA.baz.getter.onAfterCallObserverAdd(observer);
+    IA.baz.setter.onBeforeCallObserverAdd(observer);
 
-    IB.b.getter.onValueObserverAdd(observer);
-    IB.b.setter.onArgsObserverAdd(observer);
+    IB.b.getter.onAfterCallObserverAdd(observer);
+    IB.b.setter.onBeforeCallObserverAdd(observer);
 
     // a sequence of read/writes
     o.a = o.a + 20;

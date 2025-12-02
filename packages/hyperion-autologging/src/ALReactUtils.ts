@@ -1,12 +1,15 @@
 /**
- * (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
+ * Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved.
  */
 
 'use strict';
 
+import { BailTraversalFunc } from "./ALElementInfo";
+
 export type ReactComponentData = Readonly<{
   name: string | null,
   stack: Array<string>,
+  isTruncated: boolean,
 }>;
 
 export type ComponentNameValidator = (name: string) => boolean;
@@ -27,6 +30,9 @@ export function setComponentNameValidator(validator: ComponentNameValidator): vo
   componentNameValidator = validator;
 }
 
+// Store the hash used for react internal attributes once found, and attempt to reuse it
+let reactInternalHash: string | null = null;
+
 type ReactInternalFiber = Readonly<{
   key: string | null,
   // memoizedProps can be any object
@@ -42,10 +48,42 @@ type ReactInternalFiberType = Readonly<{
   render: ReactInternalFiberType,
 }>;
 
+const reactFiberPrefix = '__reactFiber$';
+
 const getReactInternalFiber = (element: Element): ReactInternalFiber | null => {
-  const key = Object.keys(element).find(key => key.startsWith('__reactFiber$'));
+  let fiber: ReactInternalFiber | null = null;
+  let fiberKey: string | null = null;
+  let listeningKeyFound = false;
   const el = element as { [k: string]: any };
-  return key != null ? el[key] : null;
+  // Check if we have an internal hash, and use it if we can
+  if (reactInternalHash != null) {
+    fiber = el[reactFiberPrefix + reactInternalHash];
+  }
+  // Found from cached hash
+  if (fiber != null) {
+    return fiber;
+  }
+  // Otherwise fallback and iterate the keys.
+  // If this is a reactListening node, then fiber will not be available mark that we saw this attribute.
+  for (const key of Object.keys(element)) {
+    if (key.startsWith(reactFiberPrefix)) {
+      fiberKey = key;
+      reactInternalHash = key.replace(reactFiberPrefix, '');
+      break;
+      // Note this does not have the $ suffix, or begin with two _
+    } else if (key.startsWith('_reactListening')) {
+      listeningKeyFound = true;
+    }
+  }
+  // No fiber found
+  if (fiberKey == null) {
+    // If we saw this was a listening installed node, attempt to grab fiber from the parent element.
+    if (listeningKeyFound && element.parentElement != null) {
+      return getReactInternalFiber(element.parentElement);
+    }
+    return null;
+  }
+  return el[fiberKey];
 };
 
 const getReactComponentName = (
@@ -62,6 +100,7 @@ const getReactComponentName = (
 
 export function getReactComponentData_THIS_CAN_BREAK(
   node: Element | null,
+  bailTraversal?: BailTraversalFunc
 ): ReactComponentData | null {
   if (node == null) {
     return null;
@@ -72,7 +111,14 @@ export function getReactComponentData_THIS_CAN_BREAK(
     let name: string | null = null;
     const stack: Array<string> = [];
     let fiber = getReactInternalFiber(element);
+    let depth = 0;
+    let isTruncated = false;
     while (fiber) {
+      if (bailTraversal != null && bailTraversal(name != null, depth++)) {
+        stack.push('...');
+        isTruncated = true;
+        break;
+      }
       const fiberType = fiber.type;
       if (fiberType == null || typeof fiberType === 'string') {
         fiber = fiber.return;
@@ -90,7 +136,7 @@ export function getReactComponentData_THIS_CAN_BREAK(
       }
       fiber = fiber.return;
     }
-    return stack.length > 0 ? { name, stack } : null;
+    return stack.length > 0 ? { name, stack, isTruncated } : null;
   } catch (err) {
     if (__DEV__) {
       throw err;

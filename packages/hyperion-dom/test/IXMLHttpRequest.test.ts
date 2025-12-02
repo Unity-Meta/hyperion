@@ -8,7 +8,7 @@ import "jest";
 import xhrmock from 'xhr-mock';
 import * as IXMLHttpRequest from "../src/IXMLHttpRequest";
 import * as IWindow from "../src/IWindow";
-import { intercept } from "@hyperion/hyperion-core/src/intercept";
+import { intercept } from "hyperion-core/src/intercept";
 
 async function asyncxhr(request: {
   method: string,
@@ -87,11 +87,11 @@ describe('test XHR interception', () => {
     //   result = [this, value];
     // });
     // IWindow.XMLHttpRequest.onArgsObserverAdd(function (this, value) {
-    IXMLHttpRequest.constructor.onValueObserverAdd(function (this, value) {
+    IXMLHttpRequest.constructor.onAfterCallObserverAdd(function (this, value) {
       expect(value).toBeInstanceOf(XMLHttpRequest);
     });
 
-    IXMLHttpRequest.open.onArgsObserverAdd(function (this, method, url) {
+    IXMLHttpRequest.open.onBeforeCallObserverAdd(function (this, method, url) {
       result = [this, method, url];
     });
 

@@ -8,6 +8,7 @@ import "jest";
 
 import * as ALInteractableDOMElement from "../src/ALInteractableDOMElement";
 import * as DomFragment from "./DomFragment";
+import { UIEventConfig, trackAndEnableUIEventHandlers } from "../src/ALUIEventPublisher";
 
 function createTestDom(): DomFragment.DomFragment {
   return DomFragment.html(`
@@ -20,14 +21,14 @@ function createTestDom(): DomFragment.DomFragment {
   <span id='7' aria-description="test7" aria-describedby="8"></span>
   <span id='8'>test8</span>
   <span id='9' aria-label="test9">ignored</span>
-  <span id='10'><span aria-label="te"></span>s<span>t10</span></span>
+  <span id='10'><span id='10.1' aria-label="te"></span>s<span id='10.2'>t10</span></span>
   `);
 }
 function createInteractableTestDom(): DomFragment.DomFragment {
   return DomFragment.html(`
     <div id='no-interactable'>No Interactable</div>
     <div>
-      <div id='atag-parent-clickable' data-clickable="1">
+      <div id='atag-parent-clickable' data-interactable="|click|">
         <a id='atag' href="#">Create metric</a>
         <a id='atag-nohref'>Create metric</a>
       </div>
@@ -38,7 +39,7 @@ function createInteractableTestDom(): DomFragment.DomFragment {
       <details id='details'>details</details>
       <dialog id='dialog'>dialog</dialog>
       <dialog id='summary'>summary</summary>
-      <div id="outer-clickable" aria-busy="false" class="test" role="button" tabindex="0" data-clickable="1" data-keydownable="1">
+      <div id="outer-clickable" aria-busy="false" class="test" role="button" tabindex="0" data-interactable="|click||keydown|">
         <span class="1">
           <div class="2">
             <div id="inner-clickable-assign-handler" class="3">
@@ -63,15 +64,20 @@ function getText(id: string): string | null {
   return ALInteractableDOMElement.getElementTextEvent(element, null).elementName;
 }
 
+function getTextFromParent(id: string, parentEvent: UIEventConfig['eventName'] | undefined): string | null {
+  const element = document.getElementById(id);
+  return ALInteractableDOMElement.getElementTextEvent(element, null, parentEvent).elementName;
+}
+
 describe("Test interactable detection algorithm", () => {
-  function interactable(node: HTMLElement | null, eventName: string, interactableOnly: boolean = true): HTMLElement | null {
-    return ALInteractableDOMElement.getInteractable(node, eventName, interactableOnly);
+  function interactable(node: HTMLElement | null, eventName: UIEventConfig['eventName']): HTMLElement | null {
+    return ALInteractableDOMElement.getInteractable(node, eventName);
   }
 
   test("Detect interactable", () => {
     const dom = DomFragment.html(`
       <div id='1' onclick="return 1;"></div>
-      <div id="2" data-clickable="1">
+      <div id="2" data-interactable="|click|">
         <span id="3">Test</span>
       </div>
     `);
@@ -91,8 +97,7 @@ describe("Test interactable detection algorithm", () => {
     const dom = createInteractableTestDom();
 
     const ni = document.getElementById("no-interactable");
-    expect(interactable(ni, "click", true)).toBeNull();
-    expect(interactable(ni, "click", false)).toBeNull();
+    expect(interactable(ni, "click")).toBeNull();
 
     dom.cleanup();
   })
@@ -172,7 +177,7 @@ describe("Test interactable detection algorithm", () => {
   });
 });
 
-describe("Text various element text options", () => {
+describe("Test various element text options", () => {
   test("element with simple text", () => {
     const dom = createTestDom();
 
@@ -181,12 +186,73 @@ describe("Text various element text options", () => {
     expect(getText(`3`)).toBe("test3");
     expect(getText(`4`)).toBe("test3");
     expect(getText(`5`)).toBe("test3");
-    expect(getText(`6`)).toBe("test3test8");
+    expect(getText(`6`)).toBe("test3 test8");
     expect(getText(`7`)).toBe("test7");
     expect(getText(`8`)).toBe("test8");
     expect(getText(`9`)).toBe("test9");
     expect(getText(`10`)).toBe("test10");
 
+    dom.cleanup();
+  });
+
+  test("text extraction from parent handler element coming from interactable element tag input", () => {
+    const dom = DomFragment.html(`
+    <div id="outer">
+      <div id="clickable" data-interactable="|click|">
+        <span id="text-label">Grab this text</span>
+        <div>
+          <input id="radio-nested-no-text" type="radio" name="contact" value="email" checked="true" />
+        </div>
+      </div>
+    </div>`
+    );
+    expect(getTextFromParent('clickable', "click")).toBe("Grab this text");
+    // Should walk up from input -> clickable div and then extract text
+    expect(getTextFromParent('radio-nested-no-text', "click")).toBe("Grab this text");
+    // Should stop at input and extract nothing,  since parentEvent name is undefined
+    expect(getTextFromParent('radio-nested-no-text', undefined)).toBe("");
+    dom.cleanup();
+  });
+
+  test('labelable element label', () => {
+    const badId = "ain't(good)";
+    const dom = DomFragment.html(`
+      <input id='1'></input><label for='1'>test1</label>
+      <label><input id='2'></input>test2</label>
+      <input id="${badId}"></input>
+      <label for="${badId}">correct!</label>
+    `);
+
+    expect(getText('1')).toBe('test1');
+    expect(getText('2')).toBe('test2');
+    const sanitizedId = ALInteractableDOMElement.cssEscape(badId);
+    expect(document.getElementById(badId)).toStrictEqual(document.querySelector(`*[id='${sanitizedId}']`));
+    expect(getText(badId)).toBe('correct!');
+    dom.cleanup();
+  });
+
+  test('complex element label', () => {
+    const dom = DomFragment.html(`
+      <label data-interactable="|click||keydown|"><div><div><input
+        aria-checked="true" aria-disabled="false"
+        aria-describedby="js_1p" aria-labelledby="js_1q"
+        id="js_1o" type="radio" value="SINGLE" checked="" name="js_1j"
+      ><div><div id="js_1q">Single image or video </div></div>
+ <div>One image or video, or a slideshow with multiple images</div></div></div></label>
+`);
+
+    expect(getText('js_1o')).toBe('Single image or video One image or video, or a slideshow with multiple images');
+    dom.cleanup();
+  });
+
+  test('element with repeated label id', () => {
+    const dom = DomFragment.html(`
+      <span id='3'>test3</span>
+      <span id='4' aria-labelledby="3 3 8 3"></span>
+      <span id='8'>test8</span>
+    `);
+
+    expect(getText('4')).toBe('test3 test8');
     dom.cleanup();
   });
 
@@ -224,7 +290,7 @@ describe("Text various element text options", () => {
       }
     });
     const text = ALInteractableDOMElement.getElementTextEvent(dom.root, null);
-    expect(text.elementName).toBe("  test1  test2  test3  test3  test3  test3test*  test7  test*  test*  test10  ");
+    expect(text.elementName).toBe("  test1  test2  test3  test3  test3  test3 test*  test7  test*  test*  test10  ");
     console.log(text);
     dom.cleanup();
   });
@@ -232,7 +298,7 @@ describe("Text various element text options", () => {
   test("Detect interactable", () => {
     const dom = DomFragment.html(`
       <div id='1' onclick="return 1;"></div>
-      <div id="2" data-clickable="1">
+      <div id="2" data-interactable="|click|">
         <span id="3">Test</span>
       </div>
     `);
@@ -258,7 +324,10 @@ describe("Text various element text options", () => {
       <div id="addEventListener"></div>
     `);
 
-    ALInteractableDOMElement.trackInteractable("click");
+    trackAndEnableUIEventHandlers('click', {
+      captureHandler: () => { },
+      bubbleHandler: () => { },
+    });
 
     let node = document.getElementById("attribute");
     expect(node).not.toBeNull();
@@ -274,7 +343,42 @@ describe("Text various element text options", () => {
     expect(node).not.toBeNull();
     if (node) {
       node.addEventListener("click", () => { });
-      expect(node.getAttribute("data-clickable")).toBe("1");
+      expect(node.getAttribute("data-interactable")).toContain("|click|");
     }
+
+    trackAndEnableUIEventHandlers('mouseover', {
+      captureHandler: () => { },
+      bubbleHandler: () => { },
+    });
+
+    node = document.getElementById("addEventListener");
+    expect(node).not.toBeNull();
+    if (node) {
+      node.addEventListener("mouseover", () => { });
+      expect(node.getAttribute("data-interactable")).toContain("|mouseover|");
+    }
+  });
+
+  test('element with text elements', () => {
+    ALInteractableDOMElement.init({}); // clear the options from the previous tests
+    const dom = createTestDom();
+    const children = dom.root.children;
+    const texts = Array.from(children).map(child => ALInteractableDOMElement.getElementTextEvent(child, null));
+
+    expect(texts[0].elementText?.elements[0]).toStrictEqual(document.getElementById('1'));
+    expect(texts[1].elementText?.elements[0]).toStrictEqual(document.getElementById('2'));
+    expect(texts[2].elementText?.elements[0]).toStrictEqual(document.getElementById('3'));
+    expect(texts[3].elementText?.elements[0]).toStrictEqual(document.getElementById('3'));
+    expect(texts[4].elementText?.elements[0]).toStrictEqual(document.getElementById('3'));
+    expect(texts[5].elementText?.elements[0]).toStrictEqual(document.getElementById('3'));
+    expect(texts[5].elementText?.elements[1]).toStrictEqual(document.getElementById('8'));
+    expect(texts[6].elementText?.elements[0]).toStrictEqual(document.getElementById('7'));
+    expect(texts[7].elementText?.elements[0]).toStrictEqual(document.getElementById('8'));
+    expect(texts[8].elementText?.elements[0]).toStrictEqual(document.getElementById('9'));
+    expect(texts[9].elementText?.elements[0]).toStrictEqual(document.getElementById('10.1'));
+    expect(texts[9].elementText?.elements[1]).toStrictEqual(document.getElementById('10'));
+    expect(texts[9].elementText?.elements[2]).toStrictEqual(document.getElementById('10.2'));
+
+    dom.cleanup();
   });
 });

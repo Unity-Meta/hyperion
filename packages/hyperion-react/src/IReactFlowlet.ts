@@ -2,13 +2,13 @@
  * Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved.
  */
 
-import type * as Types from "@hyperion/hyperion-util/src/Types";
+import type * as Types from "hyperion-util/src/Types";
 
-import { assert } from "@hyperion/global";
-import { Flowlet } from "@hyperion/hyperion-flowlet/src/Flowlet";
-import { FlowletManager } from "@hyperion/hyperion-flowlet/src/FlowletManager";
-import * as IReactComponent from "@hyperion/hyperion-react/src/IReactComponent";
-import TestAndSet from "@hyperion/hyperion-util/src/TestAndSet";
+import { assert } from "hyperion-globals";
+import { Flowlet } from "hyperion-flowlet/src/Flowlet";
+import { FlowletManager } from "hyperion-flowlet/src/FlowletManager";
+import * as IReactComponent from "hyperion-react/src/IReactComponent";
+import TestAndSet from "hyperion-test-and-set/src/TestAndSet";
 import * as IReact from "./IReact";
 import * as IReactPropsExtension from "./IReactPropsExtension";
 
@@ -21,14 +21,14 @@ export class PropsExtension<
   DataType extends FlowletDataType,
   FlowletType extends Flowlet<DataType>
 > {
-  flowlet: FlowletType;
+  callFlowlet: FlowletType;
 
-  constructor(flowlet: FlowletType) {
-    this.flowlet = flowlet;
+  constructor(callFlowlet: FlowletType) {
+    this.callFlowlet = callFlowlet;
   }
 
   toString(): string {
-    return this.flowlet.getFullName();
+    return this.callFlowlet.getFullName();
   }
 }
 
@@ -67,8 +67,8 @@ export function init<
   const extensionGetter = IReactPropsExtension.init({
     ...options,
     extensionCtor: () => {
-      const top = flowletManager.top();
-      return top ? new PropsExtension(top) : null
+      const callFlowlet = flowletManager.top();
+      return callFlowlet ? new PropsExtension(callFlowlet) : null
     }
   });
 
@@ -78,11 +78,11 @@ export function init<
 
   function flowletPusher(props?: ExtendedProps): FlowletType | undefined {
     const extension = extensionGetter(props);
-    const activeFlowlet = extension?.flowlet;
-    if (activeFlowlet) {
-      flowletManager.push(activeFlowlet);
+    const activeCallFlowlet = extension?.callFlowlet;
+    if (activeCallFlowlet) {
+      flowletManager.push(activeCallFlowlet);
     }
-    return activeFlowlet;
+    return activeCallFlowlet;
   }
 
   const IS_FLOWLET_SETUP_PROP = 'isFlowletSetup';
@@ -111,11 +111,11 @@ export function init<
        * the body of the method has access to flowlet.
        * We will expand these methods to other lifecycle methods later.
        */
-      method.onArgsAndValueMapperAdd(function (this: ComponentWithFlowlet) {
-        const activeFlowlet = flowletPusher(this.props);
+      method.onBeforeAndAfterCallMapperAdd(function (this: ComponentWithFlowlet) {
+        const activeCallFlowlet = flowletPusher(this.props);
         return (value) => {
-          if (activeFlowlet) {
-            flowletManager.pop(activeFlowlet);
+          if (activeCallFlowlet) {
+            flowletManager.pop(activeCallFlowlet);
           }
           return value;
         }
@@ -129,11 +129,11 @@ export function init<
       if (fi.testAndSet(IS_FLOWLET_SETUP_PROP)) {
         return;
       }
-      fi.onArgsAndValueMapperAdd(([props]) => {
-        const activeFlowlet = flowletPusher(props);
+      fi.onBeforeAndAfterCallMapperAdd(([props]) => {
+        const activeCallFlowlet = flowletPusher(props);
         return (value) => {
-          if (activeFlowlet) {
-            flowletManager.pop(activeFlowlet);
+          if (activeCallFlowlet) {
+            flowletManager.pop(activeCallFlowlet);
           }
           return value;
         }

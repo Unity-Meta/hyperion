@@ -4,18 +4,20 @@
 
 import React, { ChangeEventHandler, useCallback, useState } from 'react';
 import './App.css';
-import LargeComp from './component/LargeComponent';
-import Counter from "./component/Counter";
-import NestedComponent from './component/NestedComponent';
-import { PortalBodyContainerComponent } from './component/PortalComponent';
 import DynamicSvgComponent from './component/DynamicSvgComponent';
 import ElementNameComponent from './component/ElementNameComponent';
-import TextComponent from './component/TextComponent';
-import RecursiveRuncComponent from "./component/RecursiveFuncComponent";
-import { ElementTextTooltip } from "@hyperion/hyperion-autologging-visualizer/src/component/ElementTextTooltip.react";
-import { SyncChannel } from './Channel';
+import LargeComponent from './component/LargeComponent';
+import NestedComponent from './component/NestedComponent';
 import NonInteractiveSurfaceComponent from './component/NonInteractiveSurfaceComponent';
+import DelayedChildrenSurfaceComponent from './component/DelayedChildrenSurfaceComponent';
 import ALEventLogger from './component/ALEventLogger';
+import { LocalStoragePersistentData } from 'hyperion-util/src/PersistentData';
+import ALGraphView from './component/ALGraphView';
+import ResizableSplitView from "hyperion-autologging-visualizer/src/component/ResizableSplitView.react";
+import { PortalBodyContainerComponent } from './component/PortalComponent';
+import TextComponent from './component/TextComponent';
+import RecursiveFuncComponent from './component/RecursiveFuncComponent';
+import SVGClickComponent from './component/SVGClickComponent';
 
 function InitComp() {
   const [count, setCount] = React.useState(0);
@@ -35,49 +37,97 @@ function InitComp() {
   </div>);
 }
 
+const Modes = {
+  'mutationOnlySurface': () => <NonInteractiveSurfaceComponent></NonInteractiveSurfaceComponent>,
+  'delayedChildrenSurface': () => <DelayedChildrenSurfaceComponent></DelayedChildrenSurfaceComponent>,
+  'network': () => <DynamicSvgComponent></DynamicSvgComponent>,
+  'nested': () => <>
+    <div>
+      {/* <Counter></Counter> */}
+    </div>
+    <div>
+      <NestedComponent></NestedComponent>
+    </div>
+    <div>
+      <PortalBodyContainerComponent message="Portal outside of Surface"></PortalBodyContainerComponent>
+    </div>
+    <RecursiveFuncComponent i={3}></RecursiveFuncComponent>
+    <SVGClickComponent></SVGClickComponent>
+  </>,
+  'ElementText': () => <div>
+    <ElementNameComponent />
+    <TextComponent />
+  </div>,
+  'largeTree': () => <LargeComponent></LargeComponent>,
+};
+type ModeNames = keyof typeof Modes;
+const PersistedOptionValue = new LocalStoragePersistentData<ModeNames>(
+  'mode_drop_down',
+  () => 'mutationOnlySurface',
+  value => String(value),
+  value => value in Modes ? value as ModeNames : 'mutationOnlySurface'
+);
+
+const Tools = {
+  'alGraph': () => <ALGraphView />,
+  'alConsoleEventLogger': () => <ALEventLogger />
+};
+type ToolNames = keyof typeof Tools;
+const PersistedToolOptionValue = new LocalStoragePersistentData<ToolNames>(
+  'tool_drop_down',
+  () => 'alGraph',
+  value => String(value),
+  value => value in Tools ? value as ToolNames : 'alGraph'
+);
+
+function isValidMode(mode: string): mode is ModeNames {
+  return mode in Modes;
+}
+
 function App() {
-  const maxDepth = 1000;
 
-  const Modes = {
-    'mutationOnlySurface': () => <NonInteractiveSurfaceComponent></NonInteractiveSurfaceComponent>,
-    'network': () => <DynamicSvgComponent></DynamicSvgComponent>,
-    'nested': () => <ElementTextTooltip channel={SyncChannel}>
-      <div>
-        {/* <Counter></Counter> */}
-      </div>
-      <div>
-        <NestedComponent></NestedComponent>
-        <LargeComp depth={1} maxDepth={maxDepth}></LargeComp>
-      </div>
-      <div>
-        <PortalBodyContainerComponent message="Portal outside of Surface"></PortalBodyContainerComponent>
-      </div>
-      <div>
-        <ElementNameComponent />
-      </div>
-      <TextComponent />
-      <RecursiveRuncComponent i={3}></RecursiveRuncComponent>
-    </ElementTextTooltip>,
-  };
-  const [mode, setMode] = useState<keyof typeof Modes>('mutationOnlySurface');
+  const [mode, setMode] = useState<ModeNames>(PersistedOptionValue.getValue());
+  const [tool, setTool] = useState<ToolNames>(PersistedToolOptionValue.getValue());
 
-  const onChange = useCallback<ChangeEventHandler<HTMLSelectElement>>((event) => {
+  const onModeChange = useCallback<ChangeEventHandler<HTMLSelectElement>>((event) => {
     const value = event.target.value;
-    if (value === 'mutationOnlySurface' || value === 'network' || value === 'nested') {
+    if (isValidMode(value)) {
+      PersistedOptionValue.setValue(value);
       setMode(value);
     }
   }, []);
 
-  return (
-    <div className="App">
-      <ALEventLogger />
-      <label htmlFor='testSelector'>Select a mode:</label>
-      <select onChange={onChange} value={mode} id='testSelector' aria-label='Mode Selector'>
-        {Object.keys(Modes).map(key => <option key={key} value={key}>{key}</option>)}
-      </select>
-      {Modes[mode]()}
-    </div>
-  );
+  const onToolChange = useCallback<ChangeEventHandler<HTMLSelectElement>>((event) => {
+    const value = event.target.value;
+    if (value === 'alGraph' || value === 'alConsoleEventLogger') {
+      PersistedToolOptionValue.setValue(value);
+      setTool(value);
+    }
+  }, []);
+
+  return (<ResizableSplitView direction='horizontal'
+    content1={
+      <div className='AppContent'>
+        <label htmlFor='testSelector'>Select a mode:</label>
+        <select onChange={onModeChange} value={mode} id='testSelector' aria-label='Mode Selector'>
+          {Object.keys(Modes).map(key => <option key={key} value={key}>{key}</option>)}
+        </select>
+        {Modes[mode]()}
+      </div>
+    }
+
+    content2={
+      <div className='ToolContent'>
+        <label htmlFor='toolSelector'>Select a mode:</label>
+        <select onChange={onToolChange} value={tool} id='toolSelector' aria-label='Tool Selector'>
+          {Object.keys(Tools).map(key => <option key={key} value={key}>{key}</option>)}
+        </select>
+        {Tools[tool]()}
+      </div>
+    }
+  />);
+
+
 }
 
 export default App;

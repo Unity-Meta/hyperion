@@ -7,7 +7,7 @@
 import "jest";
 import * as IWindow from "../src/IWindow";
 import { fetch } from "cross-fetch";
-import { intercept } from "@hyperion/hyperion-core/src/intercept";
+import { intercept } from "hyperion-core/src/intercept";
 
 describe('test Window interception', () => {
   test('test fetch', () => {
@@ -16,8 +16,8 @@ describe('test Window interception', () => {
       result.push([this, value]);
     });
 
-    IWindow.fetch.onArgsObserverAdd(observer);
-    IWindow.fetch.onValueObserverAdd(observer);
+    IWindow.fetch.onBeforeCallObserverAdd(observer);
+    IWindow.fetch.onAfterCallObserverAdd(observer);
 
     if (typeof window.fetch !== "function") {
       window.fetch = function () {

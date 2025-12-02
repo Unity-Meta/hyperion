@@ -1,0 +1,22 @@
+{
+  "name": "hyperion-globals",
+  "description": "global settings and utility functions",
+  "version": "0.3.4",
+  "license": "MIT",
+  "author": "Mehrdad Reshadi",
+  "main": "./src/index.js",
+  "scripts": {
+    "build": "tsc", 
+    "build-go": "tsgo",
+    "watch": "npm run build -- --watch",
+    "start": "npm run watch",
+    "test": "npm run build & jest"
+  },
+  "workspaces": [
+    "../hyperion-devtools"
+  ],
+  "devDependencies": {
+    "hyperion-devtools": "^0.1.0",
+    "@types/jest": "^29.5.14"
+  }
+}

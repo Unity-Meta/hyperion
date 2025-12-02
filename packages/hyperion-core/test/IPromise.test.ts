@@ -9,15 +9,48 @@ import * as IPromise from "../src/IPromise";
 import { interceptFunction } from "../src/FunctionInterceptor";
 
 describe('test Promise', () => {
+  test('test promise.constructor', async () => {
+    const argsObserver = jest.fn();
+    const valueObserver = jest.fn();
+
+    const handler = IPromise.constructor.onBeforeAndAfterCallMapperAdd(args => {
+      const executor = args[0];
+      const fi = interceptFunction(executor);
+      args[0] = fi.interceptor;
+      fi.onBeforeCallMapperAdd(args => {
+        const resolve = args[0];
+        const resolveFI = interceptFunction(resolve);
+        args[0] = resolveFI.interceptor;
+        resolveFI.onBeforeCallObserverAdd(argsObserver);
+        return args;
+      })
+      return value => {
+        valueObserver(value);
+        return value;
+      }
+    });
+
+    const p = new Promise<number>((resolve, reject) => {
+      Promise.resolve(10).then(resolve, reject);
+    });
+
+    await p;
+
+    expect(argsObserver).toBeCalledWith(10);
+    expect(valueObserver).toBeCalledWith(p);
+
+    IPromise.constructor.onBeforeAndAfterCallMapperRemove(handler);
+  });
+
   test('test promise.then', async () => {
     const thenArgsObserver = jest.fn();
     const thenValueObserver = jest.fn();
 
-    const argsMapper = IPromise.then.onArgsMapperAdd(([onfulfilled, onrejected]) => {
+    const argsMapper = IPromise.then.onBeforeCallMapperAdd(([onfulfilled, onrejected]) => {
       if (onfulfilled) {
         const wrappedOnfulfilled = interceptFunction(onfulfilled);
-        wrappedOnfulfilled.onArgsObserverAdd(thenArgsObserver);
-        wrappedOnfulfilled.onValueObserverAdd(thenValueObserver);
+        wrappedOnfulfilled.onBeforeCallObserverAdd(thenArgsObserver);
+        wrappedOnfulfilled.onAfterCallObserverAdd(thenValueObserver);
         onfulfilled = wrappedOnfulfilled.interceptor;
       }
       return [onfulfilled, onrejected];
@@ -27,18 +60,18 @@ describe('test Promise', () => {
     expect(thenArgsObserver).toBeCalledWith(10);
     expect(thenValueObserver).toBeCalledWith(42);
 
-    IPromise.then.onArgsMapperRemove(argsMapper);
+    IPromise.then.onBeforeCallMapperRemove(argsMapper);
   });
 
   test('test promise.catch', async () => {
     const thenArgsObserver = jest.fn();
     const thenValueObserver = jest.fn();
 
-    const argsMapper1 = IPromise.then.onArgsMapperAdd(([onfulfilled, onrejected]) => {
+    const argsMapper1 = IPromise.then.onBeforeCallMapperAdd(([onfulfilled, onrejected]) => {
       if (onfulfilled) {
         const wrappedOnfulfilled = interceptFunction(onfulfilled);
-        wrappedOnfulfilled.onArgsObserverAdd(thenArgsObserver);
-        wrappedOnfulfilled.onValueObserverAdd(thenValueObserver);
+        wrappedOnfulfilled.onBeforeCallObserverAdd(thenArgsObserver);
+        wrappedOnfulfilled.onAfterCallObserverAdd(thenValueObserver);
         onfulfilled = wrappedOnfulfilled.interceptor;
       }
       return [onfulfilled, onrejected];
@@ -47,11 +80,11 @@ describe('test Promise', () => {
 
     const catchArgsObserver = jest.fn();
     const catchValueObserver = jest.fn();
-    const argsMapper2 = IPromise.Catch.onArgsMapperAdd(([onrejected]) => {
+    const argsMapper2 = IPromise.Catch.onBeforeCallMapperAdd(([onrejected]) => {
       if (onrejected) {
         const wrapped = interceptFunction(onrejected);
-        wrapped.onArgsObserverAdd(catchArgsObserver);
-        wrapped.onValueObserverAdd(catchValueObserver);
+        wrapped.onBeforeCallObserverAdd(catchArgsObserver);
+        wrapped.onAfterCallObserverAdd(catchValueObserver);
         onrejected = wrapped.interceptor;
       }
       return [onrejected];
@@ -65,8 +98,39 @@ describe('test Promise', () => {
     expect(thenArgsObserver).toBeCalledWith(510);
     expect(thenValueObserver).toBeCalledWith(542);
 
-    IPromise.then.onArgsMapperRemove(argsMapper1);
+    IPromise.then.onBeforeCallMapperRemove(argsMapper1);
 
+  });
+
+  test("test Promise behavior back to normal", async () => {
+    const result = await Promise.resolve(1).then(value => value + 1);
+    expect(result).toBe(2);
+
+    const observer = jest.fn();
+    await Promise.reject(1).catch(observer);
+    expect(observer).toBeCalledTimes(1);
+  });
+
+
+  ([
+    [IPromise.all, () => Promise.all([Promise.resolve(1), Promise.resolve(2)])],
+    [IPromise.allSettled, () => Promise.allSettled([Promise.resolve(1), Promise.reject(2)])],
+    // [IPromise.any, () => Promise.any([Promise.resolve(1), Promise.resolve(2)])],
+    [IPromise.race, () => Promise.race([1, Promise.resolve(2)])],
+    [IPromise.reject, () => Promise.reject(1)],
+    [IPromise.resolve, () => Promise.resolve(2)],
+  ] as const).forEach(([interceptor, tester]) => {
+    test(`test Promise.${interceptor.name} static method`, async () => {
+      const argsObserver = jest.fn();
+      const handler = interceptor.onBeforeCallObserverAdd(values => {
+        argsObserver(values);
+      });
+      try {
+        await tester();
+      } catch { }
+      expect(argsObserver).toBeCalledTimes(1);
+      interceptor.onBeforeCallObserverRemove(handler);
+    });
   });
 
 });
